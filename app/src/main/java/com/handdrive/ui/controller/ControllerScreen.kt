@@ -74,6 +74,7 @@ import kotlin.math.sin
 @Composable
 fun ControllerScreen(
     onBack: () -> Unit,
+    onCalibrate: () -> Unit = {},
     viewModel: ControllerViewModel = viewModel()
 ) {
     val status by viewModel.status.collectAsStateWithLifecycle()
@@ -274,10 +275,10 @@ fun ControllerScreen(
             // Always clickable — ViewModel shows clear errors if A11y missing.
             // Auto-creates a Default profile if none selected.
             FilledTonalButton(
-                onClick = { viewModel.startControlCalibration() },
+                onClick = { onCalibrate() },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Calibrate Controls (landscape overlay)")
+                Text("Calibrate Controls")
             }
             if (!a11yConnected) {
                 Text(

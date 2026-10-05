@@ -48,10 +48,13 @@ import com.handdrive.profiles.GameProfile
 @Composable
 fun ProfilesScreen(
     onBack: () -> Unit,
+    onCalibrate: () -> Unit = {},
     viewModel: ControllerViewModel = viewModel()
 ) {
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val active by viewModel.activeProfile.collectAsStateWithLifecycle()
+    val inputStatus by viewModel.inputStatus.collectAsStateWithLifecycle()
+    val a11yOk = inputStatus.accessibility == com.handdrive.input.AccessibilityStatus.CONNECTED
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
 
@@ -93,6 +96,12 @@ fun ProfilesScreen(
                 Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                item {
+                    AccessibilityBanner(
+                        connected = a11yOk,
+                        onEnable = { viewModel.openAccessibilitySettings() }
+                    )
+                }
                 items(profiles, key = { it.id }) { profile ->
                     ProfileCard(
                         profile = profile,
@@ -100,7 +109,10 @@ fun ProfilesScreen(
                         onSelect = { viewModel.selectProfile(profile.id) },
                         onDuplicate = { viewModel.duplicateProfile(profile.id) },
                         onDelete = { viewModel.deleteProfile(profile.id) },
-                        onCalibrate = { viewModel.startControlCalibration() },
+                        onCalibrate = {
+                            viewModel.selectProfile(profile.id)
+                            onCalibrate()
+                        },
                         onResetCal = { viewModel.resetProfileCalibration(profile.id) }
                     )
                 }
@@ -182,6 +194,40 @@ private fun ProfileCard(
                         FilledTonalButton(onClick = onResetCal) { Text("Reset") }
                     }
                 }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun AccessibilityBanner(connected: Boolean, onEnable: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (connected)
+                MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.errorContainer
+        ),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                if (connected) "Accessibility: Connected ✓"
+                else "⚠ Accessibility Service Required",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (connected)
+                    "HandDrive can inject game touches."
+                else
+                    "HandDrive needs Accessibility permission to control game touch input. You can still create and calibrate profiles.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (!connected) {
+                Spacer(Modifier.height(8.dp))
+                FilledTonalButton(onClick = onEnable) { Text("Enable Accessibility") }
             }
         }
     }

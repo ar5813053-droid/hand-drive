@@ -19,7 +19,6 @@ class HandDriveAccessibilityService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val gestureInFlight = AtomicBoolean(false)
-    private var calibrationOverlay: CalibrationOverlayManager? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -41,7 +40,6 @@ class HandDriveAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         Log.i(TAG, "Service destroyed")
         cancelActiveGesture()
-        hideCalibration()
         if (instanceRef.get() === this) {
             instanceRef.set(null)
         }
@@ -158,53 +156,6 @@ class HandDriveAccessibilityService : AccessibilityService() {
         }
     }
 
-
-    fun startCalibration(
-        onFinished: (CalibrationOverlayManager.Result) -> Unit,
-        onCancelled: () -> Unit,
-        onError: (String) -> Unit = {}
-    ) {
-        mainHandler.post {
-            try {
-                // dismiss previous without firing cancel
-                calibrationOverlay?.let { prev ->
-                    try {
-                        val wm = getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
-                        // force clean remove via dismiss cancelled=false path
-                    } catch (_: Exception) {}
-                }
-                hideCalibrationSync()
-                val mgr = CalibrationOverlayManager(this)
-                mgr.onFinished = { result ->
-                    calibrationOverlay = null
-                    onFinished(result)
-                }
-                mgr.onCancelled = {
-                    calibrationOverlay = null
-                    onCancelled()
-                }
-                mgr.onError = onError
-                calibrationOverlay = mgr
-                mgr.show()
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "startCalibration failed: ${e.message}", e)
-                onError(e.message ?: "Calibration overlay could not be opened.")
-                onCancelled()
-            }
-        }
-    }
-
-    private fun hideCalibrationSync() {
-        try {
-            calibrationOverlay?.dismiss(cancelled = false)
-        } catch (_: Exception) {
-        }
-        calibrationOverlay = null
-    }
-
-    fun hideCalibration() {
-        mainHandler.post { hideCalibrationSync() }
-    }
 
     companion object {
         private const val TAG = "HandDriveA11y"

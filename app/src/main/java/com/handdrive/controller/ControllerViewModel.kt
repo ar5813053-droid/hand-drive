@@ -259,121 +259,57 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
      * 4) On finish/cancel unlock orientation — input stays off until Start
      */
     /**
-     * Enter dedicated LANDSCAPE calibration mode.
-     * Does NOT require a pre-calibrated profile — creates one if missing.
-     * Requires AccessibilityService connected.
+     * Called when dedicated CalibrationScreen opens.
+     * Stops controller and releases all injected input.
+     * Does not require Accessibility (editing is pure UI).
      */
-    fun startControlCalibration(onDone: (Boolean) -> Unit = {}) {
-        // Immediate UI feedback
-        _inputStatus.update {
-            it.copy(lastError = null)
-        }
-        _status.update { it.copy(errorMessage = "Starting calibration…") }
-
-        val service = HandDriveAccessibilityService.getInstance()
-        if (service == null) {
-            val msg = "Enable HandDrive Accessibility Service before calibration."
-            _inputStatus.update { it.copy(lastError = msg) }
-            _status.update { it.copy(errorMessage = msg) }
-            onDone(false)
-            return
-        }
-
-        // Disable game input for the entire calibration session
+    fun prepareForCalibrationEditor() {
         stopController()
         gestureController.releaseAll()
-
-        viewModelScope.launch {
-            try {
-                // Ensure a profile exists (calibration must not be blocked by readiness)
-                var profile = _activeProfile.value
-                if (profile == null) {
-                    profile = profileRepo.create("Default")
-                    // Wait briefly for flow to update active profile
-                    kotlinx.coroutines.delay(100L)
-                    profile = _activeProfile.value ?: profile
-                }
-
-                MainActivity.lockLandscape()
-                // Wait for activity recreation + landscape metrics
-                kotlinx.coroutines.delay(600L)
-
-                val svc = HandDriveAccessibilityService.getInstance()
-                if (svc == null) {
-                    MainActivity.unlockOrientation()
-                    val msg = "Accessibility disconnected during calibration."
-                    _inputStatus.update { it.copy(lastError = msg) }
-                    _status.update { it.copy(errorMessage = msg) }
-                    onDone(false)
-                    return@launch
-                }
-
-                val profileSnapshot = profile
-                svc.startCalibration(
-                    onFinished = { result ->
-                        viewModelScope.launch {
-                            try {
-                                val orient = if (result.screenWidth > result.screenHeight)
-                                    com.handdrive.profiles.ScreenOrientation.LANDSCAPE
-                                else
-                                    result.orientation
-                                val latest = _activeProfile.value ?: profileSnapshot
-                                val newLayout = ControlLayout(
-                                    steeringCenter = result.steeringCenter,
-                                    steeringLeft = result.steeringLeft,
-                                    steeringRight = result.steeringRight,
-                                    brake = result.brake,
-                                    throttle = result.throttle,
-                                    customControls = latest.layout.customControls,
-                                    calibrated = true,
-                                    calibrationScreenWidth = result.screenWidth,
-                                    calibrationScreenHeight = result.screenHeight,
-                                    calibrationOrientation = orient
-                                )
-                                profileRepo.update(
-                                    latest.copy(
-                                        layout = newLayout,
-                                        updatedAtMs = System.currentTimeMillis()
-                                    )
-                                )
-                                MainActivity.unlockOrientation()
-                                _status.update {
-                                    it.copy(errorMessage = "Calibration saved. Press Start Controller when ready.")
-                                }
-                                _inputStatus.update { it.copy(lastError = null) }
-                                onDone(true)
-                            } catch (e: Exception) {
-                                MainActivity.unlockOrientation()
-                                val msg = "Failed to save calibration: ${e.message}"
-                                _status.update { it.copy(errorMessage = msg) }
-                                _inputStatus.update { it.copy(lastError = msg) }
-                                onDone(false)
-                            }
-                        }
-                    },
-                    onCancelled = {
-                        MainActivity.unlockOrientation()
-                        _status.update { it.copy(errorMessage = "Calibration cancelled.") }
-                        onDone(false)
-                    },
-                    onError = { err ->
-                        MainActivity.unlockOrientation()
-                        val msg = if (err.contains("overlay", ignoreCase = true) || err.contains("addView", ignoreCase = true))
-                            "Calibration overlay could not be opened. $err"
-                        else
-                            err
-                        _inputStatus.update { it.copy(lastError = msg) }
-                        _status.update { it.copy(errorMessage = msg) }
-                    }
-                )
-            } catch (e: Exception) {
-                MainActivity.unlockOrientation()
-                val msg = "Could not start calibration: ${e.message}"
-                _inputStatus.update { it.copy(lastError = msg) }
-                _status.update { it.copy(errorMessage = msg) }
-                onDone(false)
+        _status.update { it.copy(errorMessage = null) }
+        _inputStatus.update { it.copy(lastError = null) }
+        // Ensure a profile exists so Finish can save
+        if (_activeProfile.value == null) {
+            viewModelScope.launch {
+                profileRepo.create("Default")
             }
         }
+    }
+
+    /** ReleaseAll + clear transient calibration messages. Called on leave. */
+    fun exitCalibrationEditor() {
+        gestureController.releaseAll()
+        MainActivity.unlockOrientation()
+    }
+
+    /**
+     * Persist ControlLayout from the dedicated CalibrationScreen editor.
+     * Auto-creates Default profile if needed.
+     */
+    fun saveControlLayoutFromEditor(layout: ControlLayout) {
+        viewModelScope.launch {
+            var profile = _activeProfile.value
+            if (profile == null) {
+                profile = profileRepo.create("Default")
+            }
+            profileRepo.update(
+                profile.copy(
+                    layout = layout,
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            )
+            _status.update {
+                it.copy(errorMessage = "Calibration saved. Press Start Controller when ready.")
+            }
+        }
+    }
+
+    /** @deprecated Overlay calibration removed — navigate to CalibrationScreen instead. */
+    fun startControlCalibration(onDone: (Boolean) -> Unit = {}) {
+        // Legacy no-op path kept for binary compatibility of older call sites.
+        // UI should navigate to Screen.Calibration.
+        prepareForCalibrationEditor()
+        onDone(false)
     }
 
     /** Validate profile readiness before starting controller. */
@@ -473,7 +409,7 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         a11yPollJob?.cancel()
         HandDriveAccessibilityService.statusListener = null
-        HandDriveAccessibilityService.getInstance()?.hideCalibration()
+        
         stopController()
         super.onCleared()
     }

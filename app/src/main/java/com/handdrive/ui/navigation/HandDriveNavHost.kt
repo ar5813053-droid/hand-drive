@@ -34,12 +34,14 @@ fun HandDriveNavHost(
         }
         composable(Screen.Controller.route) {
             ControllerScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onCalibrate = { navController.navigate(Screen.Calibration.route) }
             )
         }
         composable(Screen.Profiles.route) {
             ProfilesScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onCalibrate = { navController.navigate(Screen.Calibration.route) }
             )
         }
         composable(Screen.Calibration.route) {
