@@ -188,6 +188,10 @@ fun CalibrationScreen(
 
     fun finishAndSave() {
         try {
+            // Always record LANDSCAPE when calibration landscape lock was used
+            val savedOrient = if (
+                MainActivity.calibrationLandscapeLocked || screenW >= screenH
+            ) ScreenOrientation.LANDSCAPE else orientation
             val layout = ControlLayout(
                 steeringCenter = clampPoint(steeringCenter),
                 steeringLeft = clampPoint(steeringLeft),
@@ -198,8 +202,9 @@ fun CalibrationScreen(
                 calibrated = true,
                 calibrationScreenWidth = screenW.roundToInt().coerceAtLeast(1),
                 calibrationScreenHeight = screenH.roundToInt().coerceAtLeast(1),
-                calibrationOrientation = orientation
+                calibrationOrientation = savedOrient
             )
+            Log.i(TAG, "Saving layout orient=$savedOrient size=${screenW.toInt()}x${screenH.toInt()}")
             viewModel.saveControlLayoutFromEditor(layout)
             leaveCalibration(save = true)
         } catch (e: Exception) {

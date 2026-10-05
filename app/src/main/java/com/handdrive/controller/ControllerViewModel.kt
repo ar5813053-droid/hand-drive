@@ -2,6 +2,7 @@ package com.handdrive.controller
 
 import android.app.Application
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -37,6 +38,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class ControllerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val TAG = "HandDriveCtrl"
 
     private val settingsRepo = SettingsRepository(application)
     private val profileRepo = ProfileRepository(application)
@@ -102,8 +105,9 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         wm?.defaultDisplay?.getRealMetrics(metrics)
-        return metrics.widthPixels.toFloat().coerceAtLeast(1080f) to
-            metrics.heightPixels.toFloat().coerceAtLeast(1920f)
+        val w = metrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val h = metrics.heightPixels.toFloat().coerceAtLeast(1f)
+        return w to h
     }
 
     private fun currentOrientation(): ScreenOrientation {
@@ -149,46 +153,99 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         _status.update { it.copy(permissionGranted = granted) }
     }
 
+    fun reportStartError(message: String) {
+        android.util.Log.w("HandDriveCtrl", message)
+        _status.update { it.copy(isActive = false, errorMessage = message) }
+        _inputStatus.update { it.copy(lastError = message) }
+    }
+
     fun startController(
         lifecycleOwner: androidx.lifecycle.LifecycleOwner,
         previewView: androidx.camera.view.PreviewView
     ) {
-        if (active) return
-        val issues = profileReadyIssues().filter {
-            // Allow start with uncalibrated defaults for testing, but warn
-            it != "No profile selected"
-        }
-        val blocking = issues.filter {
-            it.contains("Orientation mismatch") || it.contains("Accessibility")
-        }
-        if (blocking.isNotEmpty()) {
-            _status.update {
-                it.copy(errorMessage = blocking.joinToString(" · "))
-            }
-            // Orientation / a11y still block hard
-            if (blocking.any { it.contains("Orientation") || it.contains("Accessibility") }) {
-                // Still allow camera preview for testing without a11y, but don't enable injection
-            }
-        }
-        _activeProfile.value?.let { applyProfileLayout(it) } ?: applyDefaultLayout()
-        if (_inputStatus.value.orientationMismatch) {
-            _status.update {
-                it.copy(errorMessage = "Profile orientation mismatch — recalibrate or rotate device")
-            }
+        Log.i(TAG, "startController() called active=$active")
+        if (active) {
+            Log.i(TAG, "already active — ignore")
             return
         }
+
+        // Refresh layout + orientation from current display before validating
+        val profile = _activeProfile.value
+        if (profile != null) {
+            applyProfileLayout(profile)
+        } else {
+            applyDefaultLayout()
+            Log.w(TAG, "no active profile — using default layout")
+        }
+
+        val orient = currentOrientation()
+        val mismatch = _inputStatus.value.orientationMismatch
+        val a11y = AccessibilityHelper.resolveStatus(getApplication())
+        Log.i(
+            TAG,
+            "start checks: orient=$orient mismatch=$mismatch a11y=$a11y " +
+                "profile=${profile?.name} calibrated=${profile?.layout?.calibrated} " +
+                "calibOrient=${profile?.layout?.calibrationOrientation}"
+        )
+
+        if (mismatch) {
+            val need = profile?.layout?.calibrationOrientation?.name ?: "LANDSCAPE"
+            val msg = "Controls need recalibration for this orientation. " +
+                "Profile was calibrated for $need — rotate the device to $need and try again."
+            Log.w(TAG, msg)
+            _status.update { it.copy(isActive = false, errorMessage = msg) }
+            _inputStatus.update { it.copy(lastError = msg, orientationMismatch = true) }
+            return
+        }
+
+        if (a11y != AccessibilityStatus.CONNECTED) {
+            val msg = "Accessibility Service is not connected. Enable HandDrive in system Accessibility settings."
+            Log.w(TAG, msg)
+            _status.update { it.copy(isActive = false, errorMessage = msg) }
+            _inputStatus.update { it.copy(lastError = msg, accessibility = a11y) }
+            return
+        }
+
+        if (profile != null && !profile.layout.calibrated) {
+            val msg = "Calibration data is incomplete. Open Calibrate Controls and tap Finish."
+            Log.w(TAG, msg)
+            _status.update { it.copy(isActive = false, errorMessage = msg) }
+            _inputStatus.update { it.copy(lastError = msg) }
+            return
+        }
+
         active = true
         val facing = _settings.value.cameraFacing
         if (!handTracker.initialize()) {
-            _status.update { it.copy(isActive = false, errorMessage = "Hand tracker failed") }
+            Log.e(TAG, "HandTracker.initialize() failed")
+            _status.update {
+                it.copy(isActive = false, errorMessage = "Unable to start hand tracking.")
+            }
             active = false
             return
         }
-        steeringEngine.reset(); gestureDetector.reset()
-        if (HandDriveAccessibilityService.isConnected()) gestureController.enable()
-        cameraController.start(lifecycleOwner, previewView, facing)
-        _status.update { it.copy(isActive = true, cameraFacing = facing, errorMessage = null) }
-        startProcessingLoop(); refreshInputStatus()
+        steeringEngine.reset()
+        gestureDetector.reset()
+        gestureController.enable()
+        try {
+            cameraController.start(lifecycleOwner, previewView, facing)
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera start failed", e)
+            handTracker.close()
+            gestureController.disable()
+            active = false
+            _status.update {
+                it.copy(isActive = false, errorMessage = "Camera failed: ${e.message}")
+            }
+            return
+        }
+        _status.update {
+            it.copy(isActive = true, cameraFacing = facing, errorMessage = null)
+        }
+        _inputStatus.update { it.copy(lastError = null) }
+        startProcessingLoop()
+        refreshInputStatus()
+        Log.i(TAG, "startController SUCCESS — controller ACTIVE")
     }
 
     fun stopController() {

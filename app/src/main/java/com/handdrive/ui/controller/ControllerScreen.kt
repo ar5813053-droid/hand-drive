@@ -99,11 +99,16 @@ fun ControllerScreen(
             context, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
         viewModel.setPermissionGranted(granted)
-        if (granted) {
-            previewView?.let { viewModel.startController(lifecycleOwner, it) }
-        } else {
+        if (!granted) {
             permissionLauncher.launch(Manifest.permission.CAMERA)
+            return
         }
+        val preview = previewView
+        if (preview == null) {
+            viewModel.reportStartError("Camera preview is not ready. Wait a moment and try again.")
+            return
+        }
+        viewModel.startController(lifecycleOwner, preview)
     }
 
     DisposableEffect(Unit) {
@@ -201,6 +206,24 @@ fun ControllerScreen(
                     Spacer(Modifier.width(6.dp))
                     Text("Stop")
                 }
+            }
+
+            status.errorMessage?.takeIf { it.isNotBlank() }?.let { msg ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    msg,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            inputStatus.lastError?.takeIf { it.isNotBlank() && it != status.errorMessage }?.let { msg ->
+                Text(
+                    msg,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             Spacer(Modifier.height(10.dp))
