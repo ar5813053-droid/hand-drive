@@ -247,6 +247,7 @@ fun ControllerScreen(
                     InputState.STEERING_RIGHT -> "Steering Right"
                     InputState.STEERING_CENTER -> "Steering Center"
                     InputState.BRAKE_ON -> "Brake ON"
+                    InputState.THROTTLE_ON -> "Throttle ON"
                     InputState.EMERGENCY_STOP -> "EMERGENCY STOP"
                     InputState.ERROR -> "Error"
                 }
