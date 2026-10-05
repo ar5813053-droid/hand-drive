@@ -2,60 +2,69 @@
 
 **Virtual steering wheel for Android racing games** — controlled by your hand via the phone camera.
 
-HandDrive tracks your hand in real time, models a virtual steering wheel, detects an open-palm brake gesture, and injects touch gestures into racing games through Android Accessibility Service.
+HandDrive tracks your hand in real time, models a virtual steering wheel, detects an open-palm brake gesture, and (in a later phase) injects touch gestures into racing games through Android Accessibility Service.
 
-> **Current status: Phase 1 foundation**  
-> Project structure, Jetpack Compose UI, navigation, theme, and GitHub Actions debug APK build.
+> **Current status: Phases 1–5 complete**  
+> CameraX · MediaPipe hand tracking · Virtual steering · Open-palm brake · Settings · Calibration  
+> **Phase 6 (Accessibility input injection) is NOT implemented yet.**
 
 ## Privacy
 
-The camera is used for real-time hand tracking. Camera frames are processed **locally on the device** and are **not recorded or uploaded** by HandDrive.
+The camera is used for real-time hand tracking with **MediaPipe on-device**. Camera frames are processed **locally** and are **not recorded or uploaded**.
 
-- No account required  
-- No cloud backend  
-- No unnecessary internet permission  
+- MediaPipe model is **bundled** in the APK (no runtime download)
+- No account, no cloud, no analytics
+- **No INTERNET permission**
 
 ## Requirements
 
-- Android 8.0 (API 26) or higher  
-- Camera (added in Phase 2)  
-- Accessibility Service permission (added in Phase 6)
+- Android 8.0 (API 26) or higher
+- Camera permission
 
-## Development phases
+## How to use (Phases 2–5)
 
-| Phase | Focus |
-|-------|-------|
-| **1** | Android foundation, Compose UI, navigation, GitHub Actions |
-| 2 | CameraX + preview + frame analyzer |
-| 3 | MediaPipe hand tracking + landmarks |
-| 4 | Virtual steering engine |
-| 5 | Open-palm brake + safety |
-| 6 | Accessibility Service + input injection |
-| 7 | Game calibration + profiles |
-| 8 | Real game testing |
-| 9 | Polish |
-| 10 | Release |
+1. Open **Controller**
+2. Grant camera permission
+3. Tap **Start** — live preview + hand landmarks appear
+4. Open palm → brake ON (status card)
+5. Turn hand left/right → steering value updates (default: inverted)
+6. Tune sensitivity / dead zone / invert in **Settings**
+7. Capture center/left/right poses in **Calibration**
+8. **Emergency Stop** halts tracking and resets steering/brake
+
+Input injection into games arrives in **Phase 6**.
 
 ## Building
 
-### GitHub Actions (recommended when working from phone only)
+### GitHub Actions
 
-Every push to `main` builds a debug APK. Download the artifact from the Actions tab.
+Every push to `main` runs unit tests and builds a debug APK. Download the artifact from the Actions tab.
 
-### Local (if you have a development machine)
+### Local
 
 ```bash
-./gradlew assembleDebug
+./gradlew testDebugUnitTest assembleDebug
 ```
 
-APK output: `app/build/outputs/apk/debug/`
+## Tech stack
 
-## Tech stack (Phase 1)
+| Component | Version / choice |
+|-----------|------------------|
+| Kotlin + Compose + Material 3 | — |
+| CameraX | 1.4.1 |
+| MediaPipe Tasks Vision | 0.10.21 |
+| minSdk / targetSdk / compileSdk | 26 / 35 / 35 |
+| DataStore Preferences | settings + calibration |
 
-- Kotlin
-- Jetpack Compose + Material 3
-- Navigation Compose
-- minSdk 26 / targetSdk 35 / compileSdk 35
+## Architecture
+
+```
+CameraX → HandTracker → TrackingResult
+                            ├→ SteeringEngine → SteeringCommand
+                            └→ GestureDetector → GestureState
+```
+
+Phase 6 will connect SteeringCommand + GestureState → AccessibilityService.
 
 ## License
 

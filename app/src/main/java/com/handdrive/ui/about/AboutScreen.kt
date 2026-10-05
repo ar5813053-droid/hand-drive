@@ -26,19 +26,14 @@ import com.handdrive.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(
-    onBack: () -> Unit
-) {
+fun AboutScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -51,50 +46,43 @@ fun AboutScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp)
         ) {
+            Text("HandDrive", style = MaterialTheme.typography.headlineLarge)
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = "HandDrive",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.version_label, BuildConfig.VERSION_NAME),
+                stringResource(R.string.version_label, BuildConfig.VERSION_NAME),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(Modifier.height(24.dp))
             HorizontalDivider()
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(Modifier.height(24.dp))
             Text(
-                text = stringResource(R.string.privacy_title),
+                stringResource(R.string.privacy_title),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
             Text(
-                text = stringResource(R.string.privacy_body),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                "The camera is used for real-time hand tracking with MediaPipe on-device. " +
+                    "Camera frames are processed locally and are not recorded or uploaded by HandDrive.\n\n" +
+                    "The MediaPipe model is bundled inside the app. No network access is required for tracking.\n\n" +
+                    "No account is required. No analytics are collected.",
+                style = MaterialTheme.typography.bodyLarge
             )
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(Modifier.height(24.dp))
             HorizontalDivider()
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(Modifier.height(24.dp))
             Text(
-                text = "Permissions",
+                "Permissions",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
             Text(
-                text = "• Camera — required for real-time hand tracking (added in Phase 2).\n" +
-                        "• Accessibility Service — required to inject touch gestures into games (added in Phase 6).\n\n" +
-                        "No internet permission is requested by HandDrive itself.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                "• Camera — real-time hand tracking (Phases 2–5).\n" +
+                    "• Accessibility Service — will be required in Phase 6 for touch injection into games.\n\n" +
+                    "No INTERNET permission is declared by HandDrive.",
+                style = MaterialTheme.typography.bodyLarge
             )
         }
     }
