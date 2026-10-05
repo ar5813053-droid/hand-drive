@@ -264,22 +264,48 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
      * Does not require Accessibility (editing is pure UI).
      */
     fun prepareForCalibrationEditor() {
-        stopController()
-        gestureController.releaseAll()
-        _status.update { it.copy(errorMessage = null) }
-        _inputStatus.update { it.copy(lastError = null) }
-        // Ensure a profile exists so Finish can save
-        if (_activeProfile.value == null) {
-            viewModelScope.launch {
-                profileRepo.create("Default")
+        try {
+            stopController()
+            gestureController.releaseAll()
+            _status.update { it.copy(errorMessage = null) }
+            _inputStatus.update { it.copy(lastError = null) }
+            if (_activeProfile.value == null) {
+                viewModelScope.launch {
+                    try {
+                        profileRepo.create("Default")
+                    } catch (e: Exception) {
+                        _status.update {
+                            it.copy(errorMessage = "Create a game profile before calibration.")
+                        }
+                    }
+                }
             }
+        } catch (e: Exception) {
+            _status.update {
+                it.copy(errorMessage = "Calibration couldn't be started. Please try again.")
+            }
+            throw e
         }
     }
 
-    /** ReleaseAll + clear transient calibration messages. Called on leave. */
+    /** ReleaseAll only — orientation unchanged (safe during config-change dispose). */
+    fun exitCalibrationEditorKeepOrientation() {
+        try {
+            gestureController.releaseAll()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** ReleaseAll + unlock landscape. Call only on explicit Finish/Cancel/Back. */
     fun exitCalibrationEditor() {
-        gestureController.releaseAll()
-        MainActivity.unlockOrientation()
+        try {
+            gestureController.releaseAll()
+        } catch (_: Exception) {
+        }
+        try {
+            MainActivity.setCalibrationLandscape(false)
+        } catch (_: Exception) {
+        }
     }
 
     /**

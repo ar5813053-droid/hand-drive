@@ -2,6 +2,7 @@ package com.handdrive
 
 import android.content.pm.ActivityInfo
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,14 +14,17 @@ import com.handdrive.ui.navigation.HandDriveNavHost
 import com.handdrive.ui.theme.HandDriveTheme
 
 /**
- * Host activity. Only calibration temporarily locks LANDSCAPE;
- * normal app usage follows system orientation.
+ * Host activity. Landscape lock for calibration is owned here so Compose
+ * config-change dispose cycles cannot flip orientation back and forth.
  */
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
+        if (calibrationLandscapeLocked) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
         enableEdgeToEdge()
         setContent {
             HandDriveTheme {
@@ -40,17 +44,35 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val TAG = "HandDriveMain"
+
         @Volatile
         private var instance: MainActivity? = null
 
-        /** Lock activity to landscape for control calibration. */
-        fun lockLandscape() {
-            instance?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        @Volatile
+        var calibrationLandscapeLocked: Boolean = false
+            private set
+
+        fun setCalibrationLandscape(enabled: Boolean) {
+            calibrationLandscapeLocked = enabled
+            val act = instance
+            if (act == null) {
+                Log.w(TAG, "setCalibrationLandscape($enabled) but activity is null")
+                return
+            }
+            try {
+                act.requestedOrientation = if (enabled) {
+                    ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+                Log.i(TAG, "calibration landscape locked=$enabled")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set orientation: ${e.message}", e)
+            }
         }
 
-        /** Restore free orientation after calibration. */
-        fun unlockOrientation() {
-            instance?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
+        fun lockLandscape() = setCalibrationLandscape(true)
+        fun unlockOrientation() = setCalibrationLandscape(false)
     }
 }
