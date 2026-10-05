@@ -70,9 +70,9 @@ class GestureControllerTest {
     @Test
     fun inputLayoutMapsSteering() {
         val layout = InputLayout.defaults(1000f, 2000f)
-        assertEquals(layout.steeringCenterX - layout.steeringRangePx, layout.steeringXFor(-1f), 0.1f)
-        assertEquals(layout.steeringCenterX, layout.steeringXFor(0f), 0.1f)
-        assertEquals(layout.steeringCenterX + layout.steeringRangePx, layout.steeringXFor(1f), 0.1f)
+        assertEquals(layout.steeringLeftX, layout.steeringXFor(-1f), 1f)
+        assertEquals(layout.steeringCenterX, layout.steeringXFor(0f), 1f)
+        assertEquals(layout.steeringRightX, layout.steeringXFor(1f), 1f)
     }
 
     @Test
@@ -85,9 +85,12 @@ class GestureControllerTest {
             InputCommand.ReleaseAll,
             InputCommand.TestTap(10f, 20f),
             InputCommand.TestSteer(0.5f),
-            InputCommand.TestBrake
+            InputCommand.TestBrake,
+            InputCommand.TestThrottle,
+            InputCommand.ThrottleDown,
+            InputCommand.ThrottleUp
         )
-        assertEquals(8, cmds.size)
+        assertEquals(11, cmds.size)
     }
 
     @Test

@@ -17,8 +17,11 @@ import com.handdrive.input.AccessibilityStatus
 import com.handdrive.input.GestureController
 import com.handdrive.input.InputCommand
 import com.handdrive.input.InputLayout
-import com.handdrive.input.InputState
 import com.handdrive.input.InputStatus
+import com.handdrive.profiles.ControlLayout
+import com.handdrive.profiles.GameProfile
+import com.handdrive.profiles.ProfileRepository
+import com.handdrive.profiles.ScreenOrientation
 import com.handdrive.settings.AppSettings
 import com.handdrive.settings.SettingsRepository
 import com.handdrive.steering.SteeringEngine
@@ -35,6 +38,7 @@ import kotlinx.coroutines.launch
 class ControllerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settingsRepo = SettingsRepository(application)
+    private val profileRepo = ProfileRepository(application)
     private val handTracker = HandTracker(application)
     private val cameraController = CameraController(application, handTracker)
     private val steeringEngine = SteeringEngine()
@@ -53,73 +57,87 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
     private val _inputStatus = MutableStateFlow(InputStatus())
     val inputStatus: StateFlow<InputStatus> = _inputStatus.asStateFlow()
 
+    private val _profiles = MutableStateFlow<List<GameProfile>>(emptyList())
+    val profiles: StateFlow<List<GameProfile>> = _profiles.asStateFlow()
+
+    private val _activeProfile = MutableStateFlow<GameProfile?>(null)
+    val activeProfile: StateFlow<GameProfile?> = _activeProfile.asStateFlow()
+
     private var processingJob: Job? = null
     private var a11yPollJob: Job? = null
     private var active = false
 
     init {
-        // Default layout from display metrics
-        val layout = buildDefaultLayout()
-        gestureController.setLayout(layout)
-        _inputStatus.update { it.copy(layout = layout) }
-
+        applyDefaultLayout()
+        viewModelScope.launch { settingsRepo.settingsFlow.collect { _settings.value = it } }
+        viewModelScope.launch { settingsRepo.calibrationFlow.collect { _calibration.value = it } }
+        viewModelScope.launch { profileRepo.profilesFlow.collect { _profiles.value = it } }
         viewModelScope.launch {
-            settingsRepo.settingsFlow.collect { _settings.value = it }
+            profileRepo.activeProfileFlow.collect { profile ->
+                _activeProfile.value = profile
+                profile?.let { applyProfileLayout(it) }
+            }
         }
-        viewModelScope.launch {
-            settingsRepo.calibrationFlow.collect { _calibration.value = it }
-        }
-
         cameraController.onCameraReady = { ready ->
             _status.update { it.copy(cameraReady = ready) }
-            if (!ready && active) {
-                // Camera failure → release input
-                gestureController.releaseAll()
-                refreshInputStatus()
-            }
+            if (!ready && active) { gestureController.releaseAll(); refreshInputStatus() }
         }
         cameraController.onError = { msg ->
             _status.update { it.copy(errorMessage = msg, cameraReady = false) }
-            gestureController.releaseAll()
-            refreshInputStatus()
+            gestureController.releaseAll(); refreshInputStatus()
         }
-
         HandDriveAccessibilityService.statusListener = { st ->
             _inputStatus.update { it.copy(accessibility = st) }
-            if (st != AccessibilityStatus.CONNECTED) {
-                gestureController.releaseAll()
-            }
+            if (st != AccessibilityStatus.CONNECTED) gestureController.releaseAll()
             refreshInputStatus()
         }
-
-        // Poll accessibility status (user may enable/disable outside app)
         a11yPollJob = viewModelScope.launch {
-            while (isActive) {
-                refreshAccessibilityStatus()
-                delay(1500L)
-            }
+            while (isActive) { refreshAccessibilityStatus(); delay(1500L) }
         }
     }
 
-    private fun buildDefaultLayout(): InputLayout {
+    private fun screenSize(): Pair<Float, Float> {
         val wm = getApplication<Application>().getSystemService(WindowManager::class.java)
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         wm?.defaultDisplay?.getRealMetrics(metrics)
-        val w = metrics.widthPixels.toFloat().coerceAtLeast(1080f)
-        val h = metrics.heightPixels.toFloat().coerceAtLeast(1920f)
-        return InputLayout.defaults(w, h)
+        return metrics.widthPixels.toFloat().coerceAtLeast(1080f) to
+            metrics.heightPixels.toFloat().coerceAtLeast(1920f)
+    }
+
+    private fun currentOrientation(): ScreenOrientation {
+        val (w, h) = screenSize()
+        return if (w > h) ScreenOrientation.LANDSCAPE else ScreenOrientation.PORTRAIT
+    }
+
+    private fun applyDefaultLayout() {
+        val (w, h) = screenSize()
+        val layout = InputLayout.defaults(w, h)
+        gestureController.setLayout(layout)
+        _inputStatus.update { it.copy(layout = layout) }
+    }
+
+    private fun applyProfileLayout(profile: GameProfile) {
+        val (w, h) = screenSize()
+        val layout = InputLayout.fromControlLayout(profile.layout, w, h, profile.throttleMode)
+        val mismatch = profile.layout.calibrated &&
+            profile.layout.calibrationOrientation != currentOrientation()
+        gestureController.setLayout(layout)
+        _inputStatus.update { it.copy(layout = layout, orientationMismatch = mismatch) }
     }
 
     fun refreshAccessibilityStatus() {
-        val st = AccessibilityHelper.resolveStatus(getApplication())
-        _inputStatus.update { it.copy(accessibility = st) }
+        _inputStatus.update {
+            it.copy(accessibility = AccessibilityHelper.resolveStatus(getApplication()))
+        }
     }
 
     private fun refreshInputStatus() {
         _inputStatus.update {
             it.copy(
                 inputState = gestureController.inputState,
+                throttleOn = gestureController.isThrottleHeld,
+                brakeOn = gestureController.isBrakeHeld,
                 lastError = gestureController.lastError,
                 accessibility = AccessibilityHelper.resolveStatus(getApplication())
             )
@@ -135,71 +153,42 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         previewView: androidx.camera.view.PreviewView
     ) {
         if (active) return
+        _activeProfile.value?.let { applyProfileLayout(it) } ?: applyDefaultLayout()
+        if (_inputStatus.value.orientationMismatch) {
+            _status.update {
+                it.copy(errorMessage = "Profile orientation mismatch — recalibrate or rotate device")
+            }
+        }
         active = true
         val facing = _settings.value.cameraFacing
-        val ok = handTracker.initialize()
-        if (!ok) {
-            _status.update {
-                it.copy(
-                    isActive = false,
-                    errorMessage = "Hand tracker failed to initialize"
-                )
-            }
+        if (!handTracker.initialize()) {
+            _status.update { it.copy(isActive = false, errorMessage = "Hand tracker failed") }
             active = false
             return
         }
-        steeringEngine.reset()
-        gestureDetector.reset()
-        if (HandDriveAccessibilityService.isConnected()) {
-            gestureController.enable()
-        }
+        steeringEngine.reset(); gestureDetector.reset()
+        if (HandDriveAccessibilityService.isConnected()) gestureController.enable()
         cameraController.start(lifecycleOwner, previewView, facing)
-        _status.update {
-            it.copy(
-                isActive = true,
-                cameraFacing = facing,
-                errorMessage = null
-            )
-        }
-        startProcessingLoop()
-        refreshInputStatus()
+        _status.update { it.copy(isActive = true, cameraFacing = facing, errorMessage = null) }
+        startProcessingLoop(); refreshInputStatus()
     }
 
     fun stopController() {
-        active = false
-        processingJob?.cancel()
-        processingJob = null
-        gestureController.releaseAll()
-        cameraController.stop()
-        handTracker.close()
-        steeringEngine.reset()
-        gestureDetector.reset()
+        active = false; processingJob?.cancel(); processingJob = null
+        gestureController.releaseAll(); cameraController.stop(); handTracker.close()
+        steeringEngine.reset(); gestureDetector.reset()
         _status.update {
-            ControllerStatus(
-                isActive = false,
-                cameraFacing = _settings.value.cameraFacing,
-                permissionGranted = it.permissionGranted
-            )
+            ControllerStatus(false, _settings.value.cameraFacing, permissionGranted = it.permissionGranted)
         }
         refreshInputStatus()
     }
 
-    /** Emergency Stop — immediate release, no waiting for next frame */
     fun emergencyStop() {
-        active = false
-        processingJob?.cancel()
-        processingJob = null
-        gestureController.emergencyStop()
-        cameraController.stop()
-        handTracker.close()
-        steeringEngine.reset()
-        gestureDetector.reset()
+        active = false; processingJob?.cancel(); processingJob = null
+        gestureController.emergencyStop(); cameraController.stop(); handTracker.close()
+        steeringEngine.reset(); gestureDetector.reset()
         _status.update {
-            ControllerStatus(
-                isActive = false,
-                cameraFacing = _settings.value.cameraFacing,
-                permissionGranted = it.permissionGranted
-            )
+            ControllerStatus(false, _settings.value.cameraFacing, permissionGranted = it.permissionGranted)
         }
         refreshInputStatus()
     }
@@ -208,14 +197,8 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         lifecycleOwner: androidx.lifecycle.LifecycleOwner,
         previewView: androidx.camera.view.PreviewView
     ) {
-        val next = if (_settings.value.cameraFacing == CameraFacing.FRONT) {
-            CameraFacing.REAR
-        } else {
-            CameraFacing.FRONT
-        }
-        viewModelScope.launch {
-            settingsRepo.updateSettings { it.copy(cameraFacing = next) }
-        }
+        val next = if (_settings.value.cameraFacing == CameraFacing.FRONT) CameraFacing.REAR else CameraFacing.FRONT
+        viewModelScope.launch { settingsRepo.updateSettings { it.copy(cameraFacing = next) } }
         if (active) {
             cameraController.switchCamera(lifecycleOwner, previewView, next)
             _status.update { it.copy(cameraFacing = next) }
@@ -232,8 +215,7 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
             CalPoint.LEFT -> cal.copy(leftMetric = metric)
             CalPoint.RIGHT -> cal.copy(rightMetric = metric)
         }
-        val complete = updated.leftMetric != updated.rightMetric
-        val final = updated.copy(isCalibrated = complete)
+        val final = updated.copy(isCalibrated = updated.leftMetric != updated.rightMetric)
         viewModelScope.launch { settingsRepo.saveCalibration(final) }
         _calibration.value = final
         return true
@@ -244,75 +226,84 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         _calibration.value = CalibrationData.DEFAULT
     }
 
-    // ── Accessibility Test commands ──────────────────────────────────────
+    fun createProfile(name: String) { viewModelScope.launch { profileRepo.create(name) } }
+    fun selectProfile(id: String) { viewModelScope.launch { profileRepo.setActive(id) } }
+    fun deleteProfile(id: String) { viewModelScope.launch { profileRepo.delete(id) } }
+    fun duplicateProfile(id: String) { viewModelScope.launch { profileRepo.duplicate(id) } }
+    fun updateProfile(profile: GameProfile) { viewModelScope.launch { profileRepo.update(profile) } }
+    fun resetProfileCalibration(id: String) { viewModelScope.launch { profileRepo.resetCalibration(id) } }
+
+    fun startControlCalibration(onDone: (Boolean) -> Unit = {}) {
+        val service = HandDriveAccessibilityService.getInstance()
+        if (service == null) {
+            _inputStatus.update { it.copy(lastError = "Enable Accessibility service first") }
+            onDone(false); return
+        }
+        val profile = _activeProfile.value
+        if (profile == null) {
+            _inputStatus.update { it.copy(lastError = "Create/select a profile first") }
+            onDone(false); return
+        }
+        service.startCalibration(
+            onFinished = { result ->
+                viewModelScope.launch {
+                    val newLayout = ControlLayout(
+                        steeringCenter = result.steeringCenter,
+                        steeringLeft = result.steeringLeft,
+                        steeringRight = result.steeringRight,
+                        brake = result.brake,
+                        throttle = result.throttle,
+                        customControls = profile.layout.customControls,
+                        calibrated = true,
+                        calibrationScreenWidth = result.screenWidth,
+                        calibrationScreenHeight = result.screenHeight,
+                        calibrationOrientation = result.orientation
+                    )
+                    profileRepo.update(profile.copy(layout = newLayout))
+                    onDone(true)
+                }
+            },
+            onCancelled = { onDone(false) }
+        )
+    }
 
     fun testTap() {
-        val layout = gestureController.getLayout()
-        gestureController.execute(
-            InputCommand.TestTap(layout.steeringCenterX, layout.steeringCenterY)
-        )
+        val l = gestureController.getLayout()
+        gestureController.execute(InputCommand.TestTap(l.steeringCenterX, l.steeringCenterY))
         refreshInputStatus()
     }
-
-    fun testLeft() {
-        gestureController.execute(InputCommand.TestSteer(-0.8f))
-        refreshInputStatus()
-    }
-
-    fun testRight() {
-        gestureController.execute(InputCommand.TestSteer(0.8f))
-        refreshInputStatus()
-    }
-
-    fun testBrake() {
-        gestureController.execute(InputCommand.TestBrake)
-        refreshInputStatus()
-    }
-
-    fun testReleaseAll() {
-        gestureController.execute(InputCommand.ReleaseAll)
-        refreshInputStatus()
-    }
-
-    fun openAccessibilitySettings() {
-        AccessibilityHelper.openAccessibilitySettings(getApplication())
-    }
+    fun testLeft() { gestureController.execute(InputCommand.TestSteer(-0.8f)); refreshInputStatus() }
+    fun testRight() { gestureController.execute(InputCommand.TestSteer(0.8f)); refreshInputStatus() }
+    fun testBrake() { gestureController.execute(InputCommand.TestBrake); refreshInputStatus() }
+    fun testThrottle() { gestureController.execute(InputCommand.TestThrottle); refreshInputStatus() }
+    fun testReleaseAll() { gestureController.execute(InputCommand.ReleaseAll); refreshInputStatus() }
+    fun openAccessibilitySettings() { AccessibilityHelper.openAccessibilitySettings(getApplication()) }
 
     private fun startProcessingLoop() {
         processingJob?.cancel()
         processingJob = viewModelScope.launch {
             while (isActive && active) {
                 val tracking = handTracker.lastResult
-                val settings = _settings.value
-                val cal = _calibration.value
+                val global = _settings.value
+                val profile = _activeProfile.value
+                val settings = if (profile != null) global.copy(
+                    sensitivity = profile.sensitivity,
+                    smoothing = profile.smoothing,
+                    deadZone = profile.deadZone,
+                    invertSteering = profile.invertSteering,
+                    maxAngleDegrees = profile.maxAngleDegrees
+                ) else global
                 val now = System.currentTimeMillis()
-                val steering = steeringEngine.process(tracking, cal, settings, now)
+                val steering = steeringEngine.process(tracking, _calibration.value, settings, now)
                 val gesture = gestureDetector.process(tracking, settings, now)
-
-                // Safety: tracking loss / low confidence → neutralize input
-                if (tracking.state != TrackingState.TRACKING || !tracking.isValid) {
-                    if (gestureController.isEnabled()) {
-                        // Engines already neutralize; still push neutral + brake off
-                        gestureController.onSteeringAndBrake(steering, gesture, now)
-                    }
-                } else if (gestureController.isEnabled() ||
-                    HandDriveAccessibilityService.isConnected()
-                ) {
-                    if (!gestureController.isEnabled() &&
-                        HandDriveAccessibilityService.isConnected()
-                    ) {
+                val valid = tracking.state == TrackingState.TRACKING && tracking.isValid
+                if (gestureController.isEnabled() || HandDriveAccessibilityService.isConnected()) {
+                    if (!gestureController.isEnabled() && HandDriveAccessibilityService.isConnected()) {
                         gestureController.enable()
                     }
-                    gestureController.onSteeringAndBrake(steering, gesture, now)
+                    gestureController.onSteeringAndBrake(steering, gesture, valid, now)
                 }
-
-                _status.update {
-                    it.copy(
-                        tracking = tracking,
-                        steering = steering,
-                        gesture = gesture
-                    )
-                }
+                _status.update { it.copy(tracking = tracking, steering = steering, gesture = gesture) }
                 refreshInputStatus()
                 delay(16L)
             }
@@ -322,6 +313,7 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         a11yPollJob?.cancel()
         HandDriveAccessibilityService.statusListener = null
+        HandDriveAccessibilityService.getInstance()?.hideCalibration()
         stopController()
         super.onCleared()
     }

@@ -2,9 +2,9 @@
 
 **Virtual steering wheel for Android racing games** — controlled by your hand via the phone camera.
 
-> **Current status: Phases 1–6 complete**  
+> **Current status: Phases 1–7 complete**  
 > CameraX · MediaPipe · Virtual steering · Open-palm brake · **Accessibility input injection**  
-> Phase 7 (Game Profiles) is **not** implemented yet.
+> Phase 7 Game Profiles + control calibration is implemented.
 
 ## Privacy
 

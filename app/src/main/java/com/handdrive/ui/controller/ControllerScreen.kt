@@ -79,6 +79,7 @@ fun ControllerScreen(
     val status by viewModel.status.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val inputStatus by viewModel.inputStatus.collectAsStateWithLifecycle()
+    val activeProfile by viewModel.activeProfile.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
@@ -218,7 +219,18 @@ fun ControllerScreen(
                 "Steering",
                 String.format("%.0f°  (%.2f)", status.steering.angleDegrees, status.steering.value)
             )
-            StatusRow("Brake", if (status.gesture.brakeOn) "ON" else "OFF")
+            StatusRow("Brake", if (status.gesture.brakeOn || inputStatus.brakeOn) "ON" else "OFF")
+            StatusRow("Throttle", if (inputStatus.throttleOn) "ON" else "OFF")
+            StatusRow(
+                "Profile",
+                activeProfile?.let {
+                    val cal = if (it.layout.calibrated) "✓" else "not calibrated"
+                    "${it.name} ($cal)"
+                } ?: "None"
+            )
+            if (inputStatus.orientationMismatch) {
+                StatusRow("Warning", "Orientation mismatch — recalibrate")
+            }
             StatusRow(
                 "Accessibility",
                 when (inputStatus.accessibility) {
@@ -256,6 +268,15 @@ fun ControllerScreen(
 
             Spacer(Modifier.height(8.dp))
             SteeringWheelViz(status.steering.angleDegrees, Modifier.size(110.dp))
+
+            Spacer(Modifier.height(12.dp))
+            FilledTonalButton(
+                onClick = { viewModel.startControlCalibration() },
+                enabled = a11yConnected && activeProfile != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Calibrate Controls (overlay)")
+            }
 
             Spacer(Modifier.height(12.dp))
             Text(
@@ -303,6 +324,10 @@ fun ControllerScreen(
                     onClick = { viewModel.testBrake() },
                     enabled = a11yConnected
                 ) { Text("Test Brake") }
+                FilledTonalButton(
+                    onClick = { viewModel.testThrottle() },
+                    enabled = a11yConnected
+                ) { Text("Test Throttle") }
                 FilledTonalButton(
                     onClick = { viewModel.testReleaseAll() },
                     enabled = a11yConnected

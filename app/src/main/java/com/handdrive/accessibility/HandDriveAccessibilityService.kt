@@ -19,6 +19,7 @@ class HandDriveAccessibilityService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val gestureInFlight = AtomicBoolean(false)
+    private var calibrationOverlay: CalibrationOverlayManager? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -40,6 +41,7 @@ class HandDriveAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         Log.i(TAG, "Service destroyed")
         cancelActiveGesture()
+        hideCalibration()
         if (instanceRef.get() === this) {
             instanceRef.set(null)
         }
@@ -153,6 +155,28 @@ class HandDriveAccessibilityService : AccessibilityService() {
             Log.e(TAG, "dispatchGesture error: ${e.message}")
             onDone?.invoke(false)
             false
+        }
+    }
+
+
+    fun startCalibration(
+        onFinished: (CalibrationOverlayManager.Result) -> Unit,
+        onCancelled: () -> Unit
+    ) {
+        mainHandler.post {
+            hideCalibration()
+            val mgr = CalibrationOverlayManager(this)
+            mgr.onFinished = onFinished
+            mgr.onCancelled = onCancelled
+            calibrationOverlay = mgr
+            mgr.show()
+        }
+    }
+
+    fun hideCalibration() {
+        mainHandler.post {
+            calibrationOverlay?.dismiss(cancelled = false)
+            calibrationOverlay = null
         }
     }
 

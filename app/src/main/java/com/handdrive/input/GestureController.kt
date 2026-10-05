@@ -1,16 +1,19 @@
 package com.handdrive.input
 
 import android.accessibilityservice.GestureDescription
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.handdrive.accessibility.HandDriveAccessibilityService
 import com.handdrive.domain.GestureState
 import com.handdrive.domain.SteeringCommand
+import com.handdrive.profiles.ThrottleMode
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 
 /**
  * Translates SteeringCommand + GestureState into throttled Accessibility gestures.
- * Does NOT contain hand tracking, sensitivity, dead-zone, or palm detection logic.
+ * Phase 7: simultaneous steering + throttle, brake overrides throttle.
  */
 class GestureController {
 
@@ -20,10 +23,13 @@ class GestureController {
     private var lastSteerValue: Float = 0f
     private var lastSteerDispatchMs: Long = 0L
     private var brakeHeld: Boolean = false
+    private var throttleHeld: Boolean = false
+    private var lastThrottleTapMs: Long = 0L
     private var activeStroke: GestureDescription.StrokeDescription? = null
     private var currentFingerX: Float = 0f
     private var currentFingerY: Float = 0f
     private var steeringActive: Boolean = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     var inputState: InputState = InputState.IDLE
@@ -32,6 +38,9 @@ class GestureController {
     @Volatile
     var lastError: String? = null
         private set
+
+    val isBrakeHeld: Boolean get() = brakeHeld
+    val isThrottleHeld: Boolean get() = throttleHeld
 
     fun setLayout(layout: InputLayout) {
         this.layout = layout
@@ -53,12 +62,13 @@ class GestureController {
     fun isEnabled(): Boolean = enabled.get()
 
     /**
-     * Consume live steering + brake from the existing engines.
-     * Throttled — not every camera frame.
+     * Live pipeline: steering + brake + throttle.
+     * @param trackingValid true when hand is tracked with sufficient confidence
      */
     fun onSteeringAndBrake(
         steering: SteeringCommand,
         gesture: GestureState,
+        trackingValid: Boolean = true,
         nowMs: Long = System.currentTimeMillis()
     ) {
         if (!enabled.get()) return
@@ -68,35 +78,35 @@ class GestureController {
             return
         }
 
-        // Brake first (safety priority)
+        // Safety: invalid tracking → full release
+        if (!trackingValid) {
+            if (brakeHeld || throttleHeld || steeringActive) {
+                releaseAllInternal(service)
+            }
+            return
+        }
+
+        // Brake has priority over throttle
         if (gesture.brakeOn && !brakeHeld) {
+            // Turn off throttle first
+            if (throttleHeld) dispatchThrottleUp(service)
             dispatchBrakeDown(service)
         } else if (!gesture.brakeOn && brakeHeld) {
             dispatchBrakeUp(service)
+            // Restore throttle after brake release
+            if (!throttleHeld) dispatchThrottleDown(service, nowMs)
         }
 
-        // Steering — only if change is meaningful and throttle elapsed
-        val value = steering.value.coerceIn(-1f, 1f)
-        val delta = abs(value - lastSteerValue)
-        val elapsed = nowMs - lastSteerDispatchMs
-
-        if (steering.isNeutral && abs(lastSteerValue) < 0.02f && !steeringActive) {
-            return
+        // Throttle: ON when tracking valid and brake off
+        if (!gesture.brakeOn && !brakeHeld) {
+            ensureThrottle(service, nowMs)
         }
 
-        if (delta < STEER_EPSILON && elapsed < STEER_MIN_INTERVAL_MS && steeringActive) {
-            return
-        }
-
-        if (elapsed < STEER_MIN_INTERVAL_MS && steeringActive) {
-            return
-        }
-
-        dispatchSteer(service, value, nowMs)
+        // Steering updates (does not release throttle)
+        updateSteering(service, steering, nowMs)
     }
 
     fun execute(command: InputCommand) {
-        // ReleaseAll must work even without a bound service
         if (command is InputCommand.ReleaseAll) {
             releaseAll()
             return
@@ -111,10 +121,19 @@ class GestureController {
         when (command) {
             is InputCommand.Steer -> {
                 if (!enabled.get()) enable()
-                dispatchSteer(service, command.value.coerceIn(-1f, 1f), System.currentTimeMillis())
+                updateSteering(
+                    service,
+                    SteeringCommand(command.value, command.value * 90f, abs(command.value) < 0.02f, System.currentTimeMillis()),
+                    System.currentTimeMillis()
+                )
             }
-            InputCommand.BrakeDown -> dispatchBrakeDown(service)
+            InputCommand.BrakeDown -> {
+                if (throttleHeld) dispatchThrottleUp(service)
+                dispatchBrakeDown(service)
+            }
             InputCommand.BrakeUp -> dispatchBrakeUp(service)
+            InputCommand.ThrottleDown -> dispatchThrottleDown(service, System.currentTimeMillis())
+            InputCommand.ThrottleUp -> dispatchThrottleUp(service)
             InputCommand.ReleaseAll -> releaseAll()
             is InputCommand.TestTap -> {
                 service.dispatchTap(command.x, command.y) { ok ->
@@ -124,31 +143,31 @@ class GestureController {
             }
             is InputCommand.TestSteer -> {
                 if (!enabled.get()) enable()
-                dispatchSteer(service, command.value.coerceIn(-1f, 1f), System.currentTimeMillis())
+                updateSteering(
+                    service,
+                    SteeringCommand(command.value, command.value * 90f, false, System.currentTimeMillis()),
+                    System.currentTimeMillis()
+                )
             }
             InputCommand.TestBrake -> {
+                if (throttleHeld) dispatchThrottleUp(service)
                 dispatchBrakeDown(service)
-                // Auto-release after short hold for test
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                mainHandler.postDelayed({
                     dispatchBrakeUp(service)
                 }, 400L)
+            }
+            InputCommand.TestThrottle -> {
+                dispatchThrottleDown(service, System.currentTimeMillis())
+                mainHandler.postDelayed({
+                    dispatchThrottleUp(service)
+                }, 500L)
             }
         }
     }
 
     fun releaseAll() {
         val service = HandDriveAccessibilityService.getInstance()
-        service?.cancelActiveGesture()
-        activeStroke = null
-        steeringActive = false
-        if (brakeHeld) {
-            brakeHeld = false
-            // Best-effort brake release tap-up at brake position
-            service?.dispatchTap(layout.brakeX, layout.brakeY, 30L)
-        }
-        lastSteerValue = 0f
-        inputState = InputState.IDLE
-        lastError = null
+        releaseAllInternal(service)
         Log.i(TAG, "releaseAll()")
     }
 
@@ -159,16 +178,67 @@ class GestureController {
         inputState = InputState.EMERGENCY_STOP
     }
 
+    private fun releaseAllInternal(service: HandDriveAccessibilityService?) {
+        service?.cancelActiveGesture()
+        activeStroke = null
+        steeringActive = false
+        if (brakeHeld) {
+            brakeHeld = false
+            service?.dispatchTap(layout.brakeX, layout.brakeY, 30L)
+        }
+        if (throttleHeld) {
+            throttleHeld = false
+            service?.dispatchTap(layout.throttleX, layout.throttleY, 30L)
+        }
+        lastSteerValue = 0f
+        inputState = InputState.IDLE
+        lastError = null
+    }
+
+    private fun ensureThrottle(service: HandDriveAccessibilityService, nowMs: Long) {
+        when (layout.throttleMode) {
+            ThrottleMode.HOLD -> {
+                if (!throttleHeld) dispatchThrottleDown(service, nowMs)
+            }
+            ThrottleMode.TAP -> {
+                if (nowMs - lastThrottleTapMs >= THROTTLE_TAP_INTERVAL_MS) {
+                    service.dispatchTap(layout.throttleX, layout.throttleY, 40L)
+                    lastThrottleTapMs = nowMs
+                    throttleHeld = true // logical "active"
+                    if (inputState != InputState.BRAKE_ON) {
+                        inputState = InputState.THROTTLE_ON
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updateSteering(
+        service: HandDriveAccessibilityService,
+        steering: SteeringCommand,
+        nowMs: Long
+    ) {
+        val value = steering.value.coerceIn(-1f, 1f)
+        val delta = abs(value - lastSteerValue)
+        val elapsed = nowMs - lastSteerDispatchMs
+
+        if (steering.isNeutral && abs(lastSteerValue) < 0.02f && !steeringActive) {
+            return
+        }
+        if (delta < STEER_EPSILON && elapsed < STEER_MIN_INTERVAL_MS && steeringActive) return
+        if (elapsed < STEER_MIN_INTERVAL_MS && steeringActive) return
+
+        dispatchSteer(service, value, nowMs)
+    }
+
     private fun dispatchSteer(
         service: HandDriveAccessibilityService,
         value: Float,
         nowMs: Long
     ) {
-        val targetX = layout.steeringXFor(value)
-        val targetY = layout.steeringCenterY
+        val (targetX, targetY) = layout.steeringPointFor(value)
 
         if (!steeringActive) {
-            // Start a new stroke from center toward target
             val startX = layout.steeringCenterX
             val startY = layout.steeringCenterY
             val stroke = service.dispatchDrag(
@@ -196,7 +266,6 @@ class GestureController {
                     willContinue = abs(value) > 0.05f
                 ) { ok ->
                     if (!ok) {
-                        // Restart next cycle from center
                         steeringActive = false
                         activeStroke = null
                     }
@@ -214,9 +283,7 @@ class GestureController {
             }
         }
 
-        // If near neutral, end the stroke
         if (abs(value) < 0.05f && steeringActive) {
-            // Final non-continuing stroke to lift
             val prev = activeStroke
             if (prev != null) {
                 service.continueDrag(
@@ -233,18 +300,19 @@ class GestureController {
 
         lastSteerValue = value
         lastSteerDispatchMs = nowMs
-        inputState = when {
-            value < -0.05f -> InputState.STEERING_LEFT
-            value > 0.05f -> InputState.STEERING_RIGHT
-            else -> InputState.STEERING_CENTER
+        if (!brakeHeld) {
+            inputState = when {
+                value < -0.05f -> InputState.STEERING_LEFT
+                value > 0.05f -> InputState.STEERING_RIGHT
+                throttleHeld -> InputState.THROTTLE_ON
+                else -> InputState.STEERING_CENTER
+            }
         }
     }
 
     private fun dispatchBrakeDown(service: HandDriveAccessibilityService) {
-        service.dispatchTap(layout.brakeX, layout.brakeY, durationMs = 80L) { ok ->
-            if (!ok) lastError = "Brake down failed"
-        }
-        // Hold-style: short continuing stroke at brake point
+        if (brakeHeld) return
+        service.dispatchTap(layout.brakeX, layout.brakeY, durationMs = 80L)
         service.dispatchDrag(
             layout.brakeX, layout.brakeY,
             layout.brakeX, layout.brakeY,
@@ -256,9 +324,39 @@ class GestureController {
     }
 
     private fun dispatchBrakeUp(service: HandDriveAccessibilityService) {
+        if (!brakeHeld) return
         service.dispatchTap(layout.brakeX, layout.brakeY, durationMs = 30L)
         brakeHeld = false
-        if (inputState == InputState.BRAKE_ON) {
+        inputState = if (throttleHeld) InputState.THROTTLE_ON else InputState.IDLE
+    }
+
+    private fun dispatchThrottleDown(service: HandDriveAccessibilityService, nowMs: Long) {
+        if (throttleHeld || brakeHeld) return
+        when (layout.throttleMode) {
+            ThrottleMode.HOLD -> {
+                service.dispatchTap(layout.throttleX, layout.throttleY, 60L)
+                service.dispatchDrag(
+                    layout.throttleX, layout.throttleY,
+                    layout.throttleX, layout.throttleY,
+                    durationMs = 100L,
+                    willContinue = true
+                )
+                throttleHeld = true
+            }
+            ThrottleMode.TAP -> {
+                service.dispatchTap(layout.throttleX, layout.throttleY, 40L)
+                lastThrottleTapMs = nowMs
+                throttleHeld = true
+            }
+        }
+        if (!brakeHeld) inputState = InputState.THROTTLE_ON
+    }
+
+    private fun dispatchThrottleUp(service: HandDriveAccessibilityService) {
+        if (!throttleHeld) return
+        service.dispatchTap(layout.throttleX, layout.throttleY, 30L)
+        throttleHeld = false
+        if (!brakeHeld && inputState == InputState.THROTTLE_ON) {
             inputState = InputState.IDLE
         }
     }
@@ -272,9 +370,8 @@ class GestureController {
 
     companion object {
         private const val TAG = "GestureController"
-        /** Minimum change in normalized steering to re-dispatch */
         private const val STEER_EPSILON = 0.04f
-        /** Minimum ms between steering gesture updates */
         private const val STEER_MIN_INTERVAL_MS = 50L
+        private const val THROTTLE_TAP_INTERVAL_MS = 200L
     }
 }
