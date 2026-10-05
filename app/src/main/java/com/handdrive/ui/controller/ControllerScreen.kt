@@ -358,7 +358,7 @@ fun ControllerScreen(
             Spacer(Modifier.height(10.dp))
             Text(
                 "Live hand → steering/brake is active when tracking + Accessibility are both on.\n" +
-                    "Game control positions are defaults until Phase 7 profiles.",
+                    "Use Game Profiles + Calibrate Controls to set exact positions.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

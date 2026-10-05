@@ -100,7 +100,8 @@ class GestureControllerTest {
         controller.onSteeringAndBrake(
             SteeringCommand(0.5f, 45f, false, 1000L),
             GestureState.off(1000L),
-            1000L
+            trackingValid = true,
+            nowMs = 1000L
         )
         // Ends in safe state
         assertTrue(
