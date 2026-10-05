@@ -271,12 +271,43 @@ fun ControllerScreen(
             SteeringWheelViz(status.steering.angleDegrees, Modifier.size(110.dp))
 
             Spacer(Modifier.height(12.dp))
+            // Always clickable — ViewModel shows clear errors if A11y missing.
+            // Auto-creates a Default profile if none selected.
             FilledTonalButton(
                 onClick = { viewModel.startControlCalibration() },
-                enabled = a11yConnected && activeProfile != null,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Calibrate Controls (overlay)")
+                Text("Calibrate Controls (landscape overlay)")
+            }
+            if (!a11yConnected) {
+                Text(
+                    "Accessibility must be enabled for calibration overlay.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            } else if (activeProfile == null) {
+                Text(
+                    "No profile selected — a Default profile will be created.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    "Profile: ${activeProfile!!.name}" +
+                        if (activeProfile!!.layout.calibrated) " · Calibrated" else " · Not calibrated",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            status.errorMessage?.let { msg ->
+                if (msg.isNotBlank()) {
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))

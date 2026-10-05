@@ -57,6 +57,7 @@ class CalibrationOverlayManager(
 
     var onFinished: ((Result) -> Unit)? = null
     var onCancelled: (() -> Unit)? = null
+    var onError: ((String) -> Unit)? = null
 
     fun show() {
         if (root != null) return
@@ -79,9 +80,9 @@ class CalibrationOverlayManager(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
@@ -164,7 +165,10 @@ class CalibrationOverlayManager(
             root = frame
             step = Step.STEERING_CENTER
             titleView?.text = stepTitle()
+            android.util.Log.i("CalibOverlay", "Overlay shown ${screenW}x${screenH} orient=$orientation")
         } catch (e: Exception) {
+            android.util.Log.e("CalibOverlay", "addView failed: ${e.message}", e)
+            onError?.invoke(e.message ?: "Calibration overlay could not be opened.")
             onCancelled?.invoke()
         }
     }

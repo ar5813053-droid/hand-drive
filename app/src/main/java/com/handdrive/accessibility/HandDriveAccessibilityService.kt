@@ -161,23 +161,49 @@ class HandDriveAccessibilityService : AccessibilityService() {
 
     fun startCalibration(
         onFinished: (CalibrationOverlayManager.Result) -> Unit,
-        onCancelled: () -> Unit
+        onCancelled: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         mainHandler.post {
-            hideCalibration()
-            val mgr = CalibrationOverlayManager(this)
-            mgr.onFinished = onFinished
-            mgr.onCancelled = onCancelled
-            calibrationOverlay = mgr
-            mgr.show()
+            try {
+                // dismiss previous without firing cancel
+                calibrationOverlay?.let { prev ->
+                    try {
+                        val wm = getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+                        // force clean remove via dismiss cancelled=false path
+                    } catch (_: Exception) {}
+                }
+                hideCalibrationSync()
+                val mgr = CalibrationOverlayManager(this)
+                mgr.onFinished = { result ->
+                    calibrationOverlay = null
+                    onFinished(result)
+                }
+                mgr.onCancelled = {
+                    calibrationOverlay = null
+                    onCancelled()
+                }
+                mgr.onError = onError
+                calibrationOverlay = mgr
+                mgr.show()
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "startCalibration failed: ${e.message}", e)
+                onError(e.message ?: "Calibration overlay could not be opened.")
+                onCancelled()
+            }
         }
     }
 
-    fun hideCalibration() {
-        mainHandler.post {
+    private fun hideCalibrationSync() {
+        try {
             calibrationOverlay?.dismiss(cancelled = false)
-            calibrationOverlay = null
+        } catch (_: Exception) {
         }
+        calibrationOverlay = null
+    }
+
+    fun hideCalibration() {
+        mainHandler.post { hideCalibrationSync() }
     }
 
     companion object {

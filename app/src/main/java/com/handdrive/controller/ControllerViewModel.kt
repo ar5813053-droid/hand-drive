@@ -258,61 +258,121 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
      * 3) Start Accessibility overlay with refreshed landscape metrics
      * 4) On finish/cancel unlock orientation — input stays off until Start
      */
+    /**
+     * Enter dedicated LANDSCAPE calibration mode.
+     * Does NOT require a pre-calibrated profile — creates one if missing.
+     * Requires AccessibilityService connected.
+     */
     fun startControlCalibration(onDone: (Boolean) -> Unit = {}) {
+        // Immediate UI feedback
+        _inputStatus.update {
+            it.copy(lastError = null)
+        }
+        _status.update { it.copy(errorMessage = "Starting calibration…") }
+
         val service = HandDriveAccessibilityService.getInstance()
         if (service == null) {
-            _inputStatus.update { it.copy(lastError = "Enable Accessibility service first") }
-            onDone(false); return
+            val msg = "Enable HandDrive Accessibility Service before calibration."
+            _inputStatus.update { it.copy(lastError = msg) }
+            _status.update { it.copy(errorMessage = msg) }
+            onDone(false)
+            return
         }
-        val profile = _activeProfile.value
-        if (profile == null) {
-            _inputStatus.update { it.copy(lastError = "Create/select a profile first") }
-            onDone(false); return
-        }
+
         // Disable game input for the entire calibration session
         stopController()
         gestureController.releaseAll()
-        MainActivity.lockLandscape()
-        // Brief delay so rotation + metrics settle before overlay reads screen size
+
         viewModelScope.launch {
-            kotlinx.coroutines.delay(450L)
-            val svc = HandDriveAccessibilityService.getInstance()
-            if (svc == null) {
-                MainActivity.unlockOrientation()
-                _inputStatus.update { it.copy(lastError = "Accessibility disconnected during calibration") }
-                onDone(false)
-                return@launch
-            }
-            svc.startCalibration(
-                onFinished = { result ->
-                    viewModelScope.launch {
-                        // Prefer LANDSCAPE label when we forced landscape lock
-                        val orient = if (result.screenWidth > result.screenHeight)
-                            com.handdrive.profiles.ScreenOrientation.LANDSCAPE
-                        else
-                            result.orientation
-                        val newLayout = ControlLayout(
-                            steeringCenter = result.steeringCenter,
-                            steeringLeft = result.steeringLeft,
-                            steeringRight = result.steeringRight,
-                            brake = result.brake,
-                            throttle = result.throttle,
-                            customControls = profile.layout.customControls,
-                            calibrated = true,
-                            calibrationScreenWidth = result.screenWidth,
-                            calibrationScreenHeight = result.screenHeight,
-                            calibrationOrientation = orient
-                        )
-                        profileRepo.update(profile.copy(layout = newLayout, updatedAtMs = System.currentTimeMillis()))
-                        MainActivity.unlockOrientation()
-                        onDone(true)
-                    }
-                },
-                onCancelled = {
-                    MainActivity.unlockOrientation()
-                    onDone(false)
+            try {
+                // Ensure a profile exists (calibration must not be blocked by readiness)
+                var profile = _activeProfile.value
+                if (profile == null) {
+                    profile = profileRepo.create("Default")
+                    // Wait briefly for flow to update active profile
+                    kotlinx.coroutines.delay(100L)
+                    profile = _activeProfile.value ?: profile
                 }
-            )
+
+                MainActivity.lockLandscape()
+                // Wait for activity recreation + landscape metrics
+                kotlinx.coroutines.delay(600L)
+
+                val svc = HandDriveAccessibilityService.getInstance()
+                if (svc == null) {
+                    MainActivity.unlockOrientation()
+                    val msg = "Accessibility disconnected during calibration."
+                    _inputStatus.update { it.copy(lastError = msg) }
+                    _status.update { it.copy(errorMessage = msg) }
+                    onDone(false)
+                    return@launch
+                }
+
+                val profileSnapshot = profile
+                svc.startCalibration(
+                    onFinished = { result ->
+                        viewModelScope.launch {
+                            try {
+                                val orient = if (result.screenWidth > result.screenHeight)
+                                    com.handdrive.profiles.ScreenOrientation.LANDSCAPE
+                                else
+                                    result.orientation
+                                val latest = _activeProfile.value ?: profileSnapshot
+                                val newLayout = ControlLayout(
+                                    steeringCenter = result.steeringCenter,
+                                    steeringLeft = result.steeringLeft,
+                                    steeringRight = result.steeringRight,
+                                    brake = result.brake,
+                                    throttle = result.throttle,
+                                    customControls = latest.layout.customControls,
+                                    calibrated = true,
+                                    calibrationScreenWidth = result.screenWidth,
+                                    calibrationScreenHeight = result.screenHeight,
+                                    calibrationOrientation = orient
+                                )
+                                profileRepo.update(
+                                    latest.copy(
+                                        layout = newLayout,
+                                        updatedAtMs = System.currentTimeMillis()
+                                    )
+                                )
+                                MainActivity.unlockOrientation()
+                                _status.update {
+                                    it.copy(errorMessage = "Calibration saved. Press Start Controller when ready.")
+                                }
+                                _inputStatus.update { it.copy(lastError = null) }
+                                onDone(true)
+                            } catch (e: Exception) {
+                                MainActivity.unlockOrientation()
+                                val msg = "Failed to save calibration: ${e.message}"
+                                _status.update { it.copy(errorMessage = msg) }
+                                _inputStatus.update { it.copy(lastError = msg) }
+                                onDone(false)
+                            }
+                        }
+                    },
+                    onCancelled = {
+                        MainActivity.unlockOrientation()
+                        _status.update { it.copy(errorMessage = "Calibration cancelled.") }
+                        onDone(false)
+                    },
+                    onError = { err ->
+                        MainActivity.unlockOrientation()
+                        val msg = if (err.contains("overlay", ignoreCase = true) || err.contains("addView", ignoreCase = true))
+                            "Calibration overlay could not be opened. $err"
+                        else
+                            err
+                        _inputStatus.update { it.copy(lastError = msg) }
+                        _status.update { it.copy(errorMessage = msg) }
+                    }
+                )
+            } catch (e: Exception) {
+                MainActivity.unlockOrientation()
+                val msg = "Could not start calibration: ${e.message}"
+                _inputStatus.update { it.copy(lastError = msg) }
+                _status.update { it.copy(errorMessage = msg) }
+                onDone(false)
+            }
         }
     }
 

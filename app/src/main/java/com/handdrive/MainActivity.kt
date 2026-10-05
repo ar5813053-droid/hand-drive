@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
 
         /** Lock activity to landscape for control calibration. */
         fun lockLandscape() {
-            instance?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            instance?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
 
         /** Restore free orientation after calibration. */
