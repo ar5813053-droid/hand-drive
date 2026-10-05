@@ -96,6 +96,12 @@ class GestureController {
     }
 
     fun execute(command: InputCommand) {
+        // ReleaseAll must work even without a bound service
+        if (command is InputCommand.ReleaseAll) {
+            releaseAll()
+            return
+        }
+
         val service = HandDriveAccessibilityService.getInstance()
         if (service == null) {
             lastError = "Accessibility service not connected"
