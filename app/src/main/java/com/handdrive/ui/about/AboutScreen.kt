@@ -66,6 +66,10 @@ fun AboutScreen(onBack: () -> Unit) {
                 "The camera is used for real-time hand tracking with MediaPipe on-device. " +
                     "Camera frames are processed locally and are not recorded or uploaded by HandDrive.\n\n" +
                     "The MediaPipe model is bundled inside the app. No network access is required for tracking.\n\n" +
+                    "Accessibility permission is required only to inject the touch gestures you intend " +
+                    "(steering and brake) into other apps. HandDrive does not read passwords or browse content.\n\n" +
+                    "Not every racing game accepts injected touches equally. Game profiles (Phase 7) " +
+                    "will help configure control positions per title.\n\n" +
                     "No account is required. No analytics are collected.",
                 style = MaterialTheme.typography.bodyLarge
             )
@@ -79,8 +83,8 @@ fun AboutScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                "• Camera — real-time hand tracking (Phases 2–5).\n" +
-                    "• Accessibility Service — will be required in Phase 6 for touch injection into games.\n\n" +
+                "• Camera — real-time hand tracking.\n" +
+                    "• Accessibility Service — touch gesture injection into games.\n\n" +
                     "No INTERNET permission is declared by HandDrive.",
                 style = MaterialTheme.typography.bodyLarge
             )

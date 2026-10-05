@@ -2,70 +2,79 @@
 
 **Virtual steering wheel for Android racing games** — controlled by your hand via the phone camera.
 
-HandDrive tracks your hand in real time, models a virtual steering wheel, detects an open-palm brake gesture, and (in a later phase) injects touch gestures into racing games through Android Accessibility Service.
-
-> **Current status: Phases 1–5 complete**  
-> CameraX · MediaPipe hand tracking · Virtual steering · Open-palm brake · Settings · Calibration  
-> **Phase 6 (Accessibility input injection) is NOT implemented yet.**
+> **Current status: Phases 1–6 complete**  
+> CameraX · MediaPipe · Virtual steering · Open-palm brake · **Accessibility input injection**  
+> Phase 7 (Game Profiles) is **not** implemented yet.
 
 ## Privacy
 
-The camera is used for real-time hand tracking with **MediaPipe on-device**. Camera frames are processed **locally** and are **not recorded or uploaded**.
-
-- MediaPipe model is **bundled** in the APK (no runtime download)
-- No account, no cloud, no analytics
+- Camera frames processed **on-device only** (MediaPipe model bundled)
+- No recording, no upload, no analytics, no account
 - **No INTERNET permission**
+- Accessibility is used **only** to inject the touch gestures you intend
 
 ## Requirements
 
-- Android 8.0 (API 26) or higher
+- Android 8.0 (API 26)+
 - Camera permission
+- **Accessibility Service enabled** for HandDrive (Settings → Accessibility)
 
-## How to use (Phases 2–5)
+## How to use
 
-1. Open **Controller**
-2. Grant camera permission
-3. Tap **Start** — live preview + hand landmarks appear
-4. Open palm → brake ON (status card)
-5. Turn hand left/right → steering value updates (default: inverted)
-6. Tune sensitivity / dead zone / invert in **Settings**
-7. Capture center/left/right poses in **Calibration**
-8. **Emergency Stop** halts tracking and resets steering/brake
+1. Enable **HandDrive** in system Accessibility settings
+2. Open **Controller** → grant camera → **Start**
+3. Use **Accessibility Test** buttons first (Test Tap / Left / Right / Brake / Release All)
+4. Live hand tracking drives steering + open-palm brake when both tracking and Accessibility are active
+5. **Emergency Stop** immediately releases all injected input
 
-Input injection into games arrives in **Phase 6**.
+Default steering mapping remains inverted (hand RIGHT → steer LEFT) unless you enable Invert Steering.
 
-## Building
+## Manual Accessibility test checklist
 
-### GitHub Actions
+1. Install debug APK  
+2. Enable HandDrive Accessibility service  
+3. Controller shows **Accessibility: CONNECTED**  
+4. Test Tap — visible tap at default steer coordinates  
+5. Test Left / Test Right — drag gestures  
+6. Test Brake — brake region tap/hold  
+7. Release All — stops active input  
+8. Disable Accessibility — UI shows NOT ENABLED / DISCONNECTED  
+9. Emergency Stop — always releases  
 
-Every push to `main` runs unit tests and builds a debug APK. Download the artifact from the Actions tab.
-
-### Local
-
-```bash
-./gradlew testDebugUnitTest assembleDebug
-```
-
-## Tech stack
-
-| Component | Version / choice |
-|-----------|------------------|
-| Kotlin + Compose + Material 3 | — |
-| CameraX | 1.4.1 |
-| MediaPipe Tasks Vision | 0.10.21 |
-| minSdk / targetSdk / compileSdk | 26 / 35 / 35 |
-| DataStore Preferences | settings + calibration |
+Real-game compatibility is Phase 8. Not every game accepts injected touches the same way.
 
 ## Architecture
 
 ```
 CameraX → HandTracker → TrackingResult
-                            ├→ SteeringEngine → SteeringCommand
-                            └→ GestureDetector → GestureState
+                            ├→ SteeringEngine → SteeringCommand ─┐
+                            └→ GestureDetector → GestureState  ─┤
+                                                               ▼
+                                                    InputCommand
+                                                               ▼
+                                                    GestureController
+                                                               ▼
+                                          HandDriveAccessibilityService
+                                                               ▼
+                                                    dispatchGesture()
 ```
 
-Phase 6 will connect SteeringCommand + GestureState → AccessibilityService.
+## Tech
+
+| Piece | Version |
+|-------|---------|
+| CameraX | 1.4.1 |
+| MediaPipe Tasks Vision | 0.10.21 |
+| min/target/compile SDK | 26 / 35 / 35 |
+
+## Build
+
+```bash
+./gradlew testDebugUnitTest assembleDebug
+```
+
+GitHub Actions builds on every push to `main`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT

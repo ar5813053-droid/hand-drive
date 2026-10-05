@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,7 +33,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.handdrive.R
+import com.handdrive.accessibility.AccessibilityHelper
 import com.handdrive.domain.CameraFacing
+import com.handdrive.input.AccessibilityStatus
 import com.handdrive.settings.SettingsRepository
 import kotlinx.coroutines.launch
 
@@ -177,6 +180,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                 scope.launch { repo.updateSettings { it.copy(detectionDelayMs = v.toLong()) } }
             }
 
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            SectionHeader("Accessibility")
+            AccessibilityStatusBlock()
+
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 "Settings are saved locally. No internet required.",
@@ -241,5 +248,29 @@ private fun SwitchSetting(
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun AccessibilityStatusBlock() {
+    val context = LocalContext.current
+    val status = AccessibilityHelper.resolveStatus(context)
+    val label = when (status) {
+        AccessibilityStatus.CONNECTED -> "Connected"
+        AccessibilityStatus.DISCONNECTED -> "Disconnected (enabled but not bound)"
+        AccessibilityStatus.NOT_ENABLED -> "Not Enabled"
+    }
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        Text("Status: $label", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { AccessibilityHelper.openAccessibilitySettings(context) }) {
+            Text("Open Accessibility Settings")
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Required to inject touch gestures into games. Enable HandDrive in system Accessibility settings.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

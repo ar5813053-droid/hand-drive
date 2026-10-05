@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +35,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -62,10 +65,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.handdrive.R
 import com.handdrive.controller.ControllerViewModel
 import com.handdrive.domain.TrackingState
+import com.handdrive.input.AccessibilityStatus
+import com.handdrive.input.InputState
 import kotlin.math.cos
 import kotlin.math.sin
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ControllerScreen(
     onBack: () -> Unit,
@@ -73,6 +78,7 @@ fun ControllerScreen(
 ) {
     val status by viewModel.status.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val inputStatus by viewModel.inputStatus.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
@@ -99,8 +105,11 @@ fun ControllerScreen(
     }
 
     DisposableEffect(Unit) {
+        viewModel.refreshAccessibilityStatus()
         onDispose { viewModel.stopController() }
     }
+
+    val a11yConnected = inputStatus.accessibility == AccessibilityStatus.CONNECTED
 
     Scaffold(
         topBar = {
@@ -117,9 +126,7 @@ fun ControllerScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            previewView?.let {
-                                viewModel.switchCamera(lifecycleOwner, it)
-                            }
+                            previewView?.let { viewModel.switchCamera(lifecycleOwner, it) }
                         },
                         enabled = status.permissionGranted
                     ) {
@@ -140,7 +147,7 @@ fun ControllerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(260.dp)
+                    .height(220.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
@@ -156,28 +163,19 @@ fun ControllerScreen(
                 if (status.tracking.state == TrackingState.TRACKING &&
                     status.tracking.landmarks.isNotEmpty()
                 ) {
-                    LandmarkOverlay(
-                        landmarks = status.tracking.landmarks,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    LandmarkOverlay(status.tracking.landmarks, Modifier.fillMaxSize())
                 }
                 if (!status.permissionGranted) {
                     Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.55f)),
+                        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            "Camera permission required",
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("Camera permission required", color = Color.White)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -188,7 +186,7 @@ fun ControllerScreen(
                     enabled = !status.isActive,
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(Icons.Default.PlayArrow, null)
                     Spacer(Modifier.width(6.dp))
                     Text("Start")
                 }
@@ -197,64 +195,121 @@ fun ControllerScreen(
                     enabled = status.isActive,
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
-                    Icon(Icons.Default.Stop, contentDescription = null)
+                    Icon(Icons.Default.Stop, null)
                     Spacer(Modifier.width(6.dp))
                     Text("Stop")
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
 
-            StatusRow(
-                "Camera",
-                when {
-                    !status.permissionGranted -> "NO PERMISSION"
-                    status.cameraReady -> "${status.cameraFacing.name} · READY"
-                    status.isActive -> "STARTING…"
-                    else -> "IDLE"
-                }
-            )
-            StatusRow(
-                "Tracking",
-                when (status.tracking.state) {
-                    TrackingState.TRACKING ->
-                        "ACTIVE · ${(status.tracking.confidence * 100).toInt()}%"
-                    TrackingState.LOW_CONFIDENCE -> "LOW CONFIDENCE"
-                    TrackingState.LOST -> "LOST"
-                }
-            )
+            StatusRow("Camera", when {
+                !status.permissionGranted -> "NO PERMISSION"
+                status.cameraReady -> "${status.cameraFacing.name} · READY"
+                status.isActive -> "STARTING…"
+                else -> "IDLE"
+            })
+            StatusRow("Tracking", when (status.tracking.state) {
+                TrackingState.TRACKING -> "ACTIVE · ${(status.tracking.confidence * 100).toInt()}%"
+                TrackingState.LOW_CONFIDENCE -> "LOW CONFIDENCE"
+                TrackingState.LOST -> "LOST"
+            })
             StatusRow(
                 "Steering",
                 String.format("%.0f°  (%.2f)", status.steering.angleDegrees, status.steering.value)
             )
+            StatusRow("Brake", if (status.gesture.brakeOn) "ON" else "OFF")
             StatusRow(
-                "Brake",
-                if (status.gesture.brakeOn) "ON" else "OFF"
+                "Accessibility",
+                when (inputStatus.accessibility) {
+                    AccessibilityStatus.CONNECTED -> "CONNECTED"
+                    AccessibilityStatus.DISCONNECTED -> "DISCONNECTED"
+                    AccessibilityStatus.NOT_ENABLED -> "NOT ENABLED"
+                }
+            )
+            StatusRow(
+                "Input",
+                when (inputStatus.inputState) {
+                    InputState.IDLE -> "Idle"
+                    InputState.STEERING_LEFT -> "Steering Left"
+                    InputState.STEERING_RIGHT -> "Steering Right"
+                    InputState.STEERING_CENTER -> "Steering Center"
+                    InputState.BRAKE_ON -> "Brake ON"
+                    InputState.EMERGENCY_STOP -> "EMERGENCY STOP"
+                    InputState.ERROR -> "Error"
+                }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            SteeringWheelViz(
-                angleDegrees = status.steering.angleDegrees,
-                modifier = Modifier.size(140.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Invert: ${if (settings.invertSteering) "ON (natural)" else "OFF (default inverted)"} · " +
-                    "Sens: ${"%.1f".format(settings.sensitivity)} · " +
-                    "DZ: ${"%.2f".format(settings.deadZone)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-
-            status.errorMessage?.let { err ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            inputStatus.layout?.let { layout ->
+                Text(
+                    "Test coords — Steer: (${layout.steeringCenterX.toInt()}, ${layout.steeringCenterY.toInt()})  " +
+                        "Brake: (${layout.brakeX.toInt()}, ${layout.brakeY.toInt()})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            inputStatus.lastError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(8.dp))
+            SteeringWheelViz(status.steering.angleDegrees, Modifier.size(110.dp))
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Accessibility Test",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                if (a11yConnected) "Service connected — tests inject real touches"
+                else "Accessibility service required",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (a11yConnected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(6.dp))
+
+            if (!a11yConnected) {
+                OutlinedButton(
+                    onClick = { viewModel.openAccessibilitySettings() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Open Accessibility Settings")
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FilledTonalButton(
+                    onClick = { viewModel.testTap() },
+                    enabled = a11yConnected
+                ) { Text("Test Tap") }
+                FilledTonalButton(
+                    onClick = { viewModel.testLeft() },
+                    enabled = a11yConnected
+                ) { Text("Test Left") }
+                FilledTonalButton(
+                    onClick = { viewModel.testRight() },
+                    enabled = a11yConnected
+                ) { Text("Test Right") }
+                FilledTonalButton(
+                    onClick = { viewModel.testBrake() },
+                    enabled = a11yConnected
+                ) { Text("Test Brake") }
+                FilledTonalButton(
+                    onClick = { viewModel.testReleaseAll() },
+                    enabled = a11yConnected
+                ) { Text("Release All") }
+            }
+
+            Spacer(Modifier.height(16.dp))
 
             Button(
                 onClick = { viewModel.emergencyStop() },
@@ -265,7 +320,7 @@ fun ControllerScreen(
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(28.dp))
+                Icon(Icons.Default.Stop, null, Modifier.size(28.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     stringResource(R.string.emergency_stop),
@@ -274,10 +329,11 @@ fun ControllerScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
-                "Local tracking & steering only.\nInput injection will be added in Phase 6.",
-                style = MaterialTheme.typography.bodyMedium,
+                "Live hand → steering/brake is active when tracking + Accessibility are both on.\n" +
+                    "Game control positions are defaults until Phase 7 profiles.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
@@ -290,10 +346,10 @@ private fun StatusRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
+            .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label, style = MaterialTheme.typography.titleSmall)
@@ -310,43 +366,25 @@ private fun LandmarkOverlay(
         val w = size.width
         val h = size.height
         for (lm in landmarks) {
-            drawCircle(
-                color = Color(0xFF00E676),
-                radius = 5f,
-                center = Offset(lm.x * w, lm.y * h)
-            )
+            drawCircle(Color(0xFF00E676), 5f, Offset(lm.x * w, lm.y * h))
         }
     }
 }
 
 @Composable
-private fun SteeringWheelViz(
-    angleDegrees: Float,
-    modifier: Modifier = Modifier
-) {
+private fun SteeringWheelViz(angleDegrees: Float, modifier: Modifier = Modifier) {
     val primary = MaterialTheme.colorScheme.primary
     val surface = MaterialTheme.colorScheme.surfaceVariant
     Canvas(modifier = modifier) {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val r = size.minDimension / 2f * 0.85f
-        drawCircle(color = surface, radius = r, center = Offset(cx, cy))
-        drawCircle(
-            color = primary,
-            radius = r,
-            center = Offset(cx, cy),
-            style = Stroke(width = 8f)
-        )
+        drawCircle(surface, r, Offset(cx, cy))
+        drawCircle(primary, r, Offset(cx, cy), style = Stroke(8f))
         val rad = Math.toRadians(angleDegrees.toDouble())
         val x = cx + (r * 0.75f * sin(rad)).toFloat()
         val y = cy - (r * 0.75f * cos(rad)).toFloat()
-        drawLine(
-            color = primary,
-            start = Offset(cx, cy),
-            end = Offset(x, y),
-            strokeWidth = 10f,
-            cap = StrokeCap.Round
-        )
-        drawCircle(color = primary, radius = 12f, center = Offset(cx, cy))
+        drawLine(primary, Offset(cx, cy), Offset(x, y), 10f, cap = StrokeCap.Round)
+        drawCircle(primary, 12f, Offset(cx, cy))
     }
 }
