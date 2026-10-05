@@ -27,6 +27,13 @@ enum class ScreenOrientation { PORTRAIT, LANDSCAPE }
 
 enum class ThrottleMode { HOLD, TAP }
 
+enum class CompatibilityStatus {
+    UNTESTED,
+    WORKS,
+    PARTIALLY_WORKS,
+    NOT_COMPATIBLE
+}
+
 enum class ControlActivation { TAP, HOLD }
 
 data class CustomControl(
@@ -126,9 +133,22 @@ data class GameProfile(
     val invertSteering: Boolean = false,
     val maxAngleDegrees: Float = 90f,
     val throttleMode: ThrottleMode = ThrottleMode.HOLD,
+    val compatibilityStatus: CompatibilityStatus = CompatibilityStatus.UNTESTED,
+    val compatibilityNotes: String = "",
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = System.currentTimeMillis()
 ) {
+    /** True when steering range, brake, and throttle have been calibrated. */
+    fun isReady(): Boolean =
+        layout.calibrated && layout.isSteeringCalibrated()
+
+    fun readinessIssues(): List<String> {
+        val issues = mutableListOf<String>()
+        if (!layout.calibrated) issues.add("Controls not calibrated")
+        if (!layout.isSteeringCalibrated()) issues.add("Steering range incomplete")
+        return issues
+    }
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
@@ -139,6 +159,8 @@ data class GameProfile(
         .put("invertSteering", invertSteering)
         .put("maxAngleDegrees", maxAngleDegrees.toDouble())
         .put("throttleMode", throttleMode.name)
+        .put("compatibilityStatus", compatibilityStatus.name)
+        .put("compatibilityNotes", compatibilityNotes)
         .put("createdAtMs", createdAtMs)
         .put("updatedAtMs", updatedAtMs)
 
@@ -155,6 +177,10 @@ data class GameProfile(
             throttleMode = runCatching {
                 ThrottleMode.valueOf(o.optString("throttleMode", "HOLD"))
             }.getOrDefault(ThrottleMode.HOLD),
+            compatibilityStatus = runCatching {
+                CompatibilityStatus.valueOf(o.optString("compatibilityStatus", "UNTESTED"))
+            }.getOrDefault(CompatibilityStatus.UNTESTED),
+            compatibilityNotes = o.optString("compatibilityNotes", ""),
             createdAtMs = o.optLong("createdAtMs", System.currentTimeMillis()),
             updatedAtMs = o.optLong("updatedAtMs", System.currentTimeMillis())
         )

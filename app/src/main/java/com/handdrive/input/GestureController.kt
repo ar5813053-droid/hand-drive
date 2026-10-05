@@ -162,6 +162,19 @@ class GestureController {
                     dispatchThrottleUp(service)
                 }, 500L)
             }
+            is InputCommand.CustomTap -> {
+                service.dispatchTap(command.x, command.y, 50L)
+            }
+            is InputCommand.CustomHold -> {
+                if (command.down) {
+                    service.dispatchDrag(
+                        command.x, command.y, command.x, command.y,
+                        durationMs = 100L, willContinue = true
+                    )
+                } else {
+                    service.dispatchTap(command.x, command.y, 30L)
+                }
+            }
         }
     }
 

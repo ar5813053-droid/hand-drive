@@ -48,6 +48,7 @@ class CalibrationOverlayManager(
     private var root: FrameLayout? = null
     private var marker: View? = null
     private var titleView: TextView? = null
+    private var coordView: TextView? = null
     private var step = Step.STEERING_CENTER
     private val points = mutableMapOf<Step, Pair<Float, Float>>()
     private var screenW = 1080
@@ -130,6 +131,15 @@ class CalibrationOverlayManager(
         }
         panel.addView(cancelBtn)
 
+        val coordLabel = TextView(service).apply {
+            text = "X: —  Y: —"
+            setTextColor(Color.CYAN)
+            textSize = 13f
+            setPadding(0, 12, 0, 0)
+        }
+        panel.addView(coordLabel)
+        coordView = coordLabel
+
         frame.addView(panel)
 
         // Draggable crosshair marker
@@ -175,6 +185,9 @@ class CalibrationOverlayManager(
                     lp.leftMargin = (event.rawX - dX).toInt().coerceIn(0, screenW - size)
                     lp.topMargin = (event.rawY - dY).toInt().coerceIn(0, screenH - size)
                     v.layoutParams = lp
+                    val nx = (lp.leftMargin + size / 2f) / screenW
+                    val ny = (lp.topMargin + size / 2f) / screenH
+                    coordView?.text = "X: %.2f  Y: %.2f  (%d×%d)".format(nx, ny, screenW, screenH)
                     true
                 }
                 else -> false
@@ -240,7 +253,7 @@ class CalibrationOverlayManager(
     }
 
     private fun stepTitle(): String = when (step) {
-        Step.STEERING_CENTER -> "Step 1/5 — Place Steering Center"
+        Step.STEERING_CENTER -> "Step 1/5 — Steering Center (landscape)"
         Step.STEERING_LEFT -> "Step 2/5 — Place Steering Left"
         Step.STEERING_RIGHT -> "Step 3/5 — Place Steering Right"
         Step.BRAKE -> "Step 4/5 — Place Brake"

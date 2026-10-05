@@ -5,6 +5,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.handdrive.MainActivity
 import com.handdrive.accessibility.AccessibilityHelper
 import com.handdrive.accessibility.HandDriveAccessibilityService
 import com.handdrive.camera.CameraController
@@ -153,11 +154,28 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
         previewView: androidx.camera.view.PreviewView
     ) {
         if (active) return
+        val issues = profileReadyIssues().filter {
+            // Allow start with uncalibrated defaults for testing, but warn
+            it != "No profile selected"
+        }
+        val blocking = issues.filter {
+            it.contains("Orientation mismatch") || it.contains("Accessibility")
+        }
+        if (blocking.isNotEmpty()) {
+            _status.update {
+                it.copy(errorMessage = blocking.joinToString(" · "))
+            }
+            // Orientation / a11y still block hard
+            if (blocking.any { it.contains("Orientation") || it.contains("Accessibility") }) {
+                // Still allow camera preview for testing without a11y, but don't enable injection
+            }
+        }
         _activeProfile.value?.let { applyProfileLayout(it) } ?: applyDefaultLayout()
         if (_inputStatus.value.orientationMismatch) {
             _status.update {
                 it.copy(errorMessage = "Profile orientation mismatch — recalibrate or rotate device")
             }
+            return
         }
         active = true
         val facing = _settings.value.cameraFacing
@@ -233,6 +251,13 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
     fun updateProfile(profile: GameProfile) { viewModelScope.launch { profileRepo.update(profile) } }
     fun resetProfileCalibration(id: String) { viewModelScope.launch { profileRepo.resetCalibration(id) } }
 
+    /**
+     * Enter dedicated LANDSCAPE calibration mode:
+     * 1) Release all game input
+     * 2) Lock activity to landscape
+     * 3) Start Accessibility overlay with refreshed landscape metrics
+     * 4) On finish/cancel unlock orientation — input stays off until Start
+     */
     fun startControlCalibration(onDone: (Boolean) -> Unit = {}) {
         val service = HandDriveAccessibilityService.getInstance()
         if (service == null) {
@@ -244,27 +269,102 @@ class ControllerViewModel(application: Application) : AndroidViewModel(applicati
             _inputStatus.update { it.copy(lastError = "Create/select a profile first") }
             onDone(false); return
         }
-        service.startCalibration(
-            onFinished = { result ->
-                viewModelScope.launch {
-                    val newLayout = ControlLayout(
-                        steeringCenter = result.steeringCenter,
-                        steeringLeft = result.steeringLeft,
-                        steeringRight = result.steeringRight,
-                        brake = result.brake,
-                        throttle = result.throttle,
-                        customControls = profile.layout.customControls,
-                        calibrated = true,
-                        calibrationScreenWidth = result.screenWidth,
-                        calibrationScreenHeight = result.screenHeight,
-                        calibrationOrientation = result.orientation
-                    )
-                    profileRepo.update(profile.copy(layout = newLayout))
-                    onDone(true)
+        // Disable game input for the entire calibration session
+        stopController()
+        gestureController.releaseAll()
+        MainActivity.lockLandscape()
+        // Brief delay so rotation + metrics settle before overlay reads screen size
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(450L)
+            val svc = HandDriveAccessibilityService.getInstance()
+            if (svc == null) {
+                MainActivity.unlockOrientation()
+                _inputStatus.update { it.copy(lastError = "Accessibility disconnected during calibration") }
+                onDone(false)
+                return@launch
+            }
+            svc.startCalibration(
+                onFinished = { result ->
+                    viewModelScope.launch {
+                        // Prefer LANDSCAPE label when we forced landscape lock
+                        val orient = if (result.screenWidth > result.screenHeight)
+                            com.handdrive.profiles.ScreenOrientation.LANDSCAPE
+                        else
+                            result.orientation
+                        val newLayout = ControlLayout(
+                            steeringCenter = result.steeringCenter,
+                            steeringLeft = result.steeringLeft,
+                            steeringRight = result.steeringRight,
+                            brake = result.brake,
+                            throttle = result.throttle,
+                            customControls = profile.layout.customControls,
+                            calibrated = true,
+                            calibrationScreenWidth = result.screenWidth,
+                            calibrationScreenHeight = result.screenHeight,
+                            calibrationOrientation = orient
+                        )
+                        profileRepo.update(profile.copy(layout = newLayout, updatedAtMs = System.currentTimeMillis()))
+                        MainActivity.unlockOrientation()
+                        onDone(true)
+                    }
+                },
+                onCancelled = {
+                    MainActivity.unlockOrientation()
+                    onDone(false)
                 }
-            },
-            onCancelled = { onDone(false) }
-        )
+            )
+        }
+    }
+
+    /** Validate profile readiness before starting controller. */
+    fun profileReadyIssues(): List<String> {
+        val profile = _activeProfile.value ?: return listOf("No profile selected")
+        val issues = profile.readinessIssues().toMutableList()
+        if (_inputStatus.value.orientationMismatch) {
+            issues.add("Orientation mismatch — rotate device or recalibrate")
+        }
+        if (_inputStatus.value.accessibility != AccessibilityStatus.CONNECTED) {
+            issues.add("Accessibility service not connected")
+        }
+        return issues
+    }
+
+    fun triggerCustomControl(controlId: String) {
+        val profile = _activeProfile.value ?: return
+        val control = profile.layout.customControls.find { it.id == controlId } ?: return
+        val layout = gestureController.getLayout()
+        val screenW = (layout.steeringCenterX / 0.25f).coerceAtLeast(1f) // fallback rough
+        // Use normalized → pixel via profile layout conversion
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        getApplication<Application>().getSystemService(android.view.WindowManager::class.java)
+            ?.defaultDisplay?.getRealMetrics(metrics)
+        val w = metrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val h = metrics.heightPixels.toFloat().coerceAtLeast(1f)
+        val (px, py) = control.point.toPixel(w, h)
+        when (control.activation) {
+            com.handdrive.profiles.ControlActivation.TAP ->
+                gestureController.execute(InputCommand.CustomTap(px, py))
+            com.handdrive.profiles.ControlActivation.HOLD ->
+                gestureController.execute(InputCommand.CustomHold(px, py, down = true))
+        }
+        refreshInputStatus()
+    }
+
+    fun setCompatibility(
+        status: com.handdrive.profiles.CompatibilityStatus,
+        notes: String = ""
+    ) {
+        val profile = _activeProfile.value ?: return
+        viewModelScope.launch {
+            profileRepo.update(
+                profile.copy(
+                    compatibilityStatus = status,
+                    compatibilityNotes = notes,
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            )
+        }
     }
 
     fun testTap() {

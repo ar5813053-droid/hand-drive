@@ -20,6 +20,8 @@ sealed class InputCommand {
     data class TestSteer(val value: Float) : InputCommand()
     data object TestBrake : InputCommand()
     data object TestThrottle : InputCommand()
+    data class CustomTap(val x: Float, val y: Float) : InputCommand()
+    data class CustomHold(val x: Float, val y: Float, val down: Boolean) : InputCommand()
 }
 
 enum class InputState {
